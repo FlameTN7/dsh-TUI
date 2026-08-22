@@ -44,6 +44,13 @@ type State = {
    *  must skip them and every height-based offset shifts down by this
    *  amount. Cleared by resize resets (fresh alignment). */
   anchoredPad: number
+  /** Peak viewportY (rows in terminal scrollback) since the last re-anchor.
+   *  Inline scrollback is monotonic, so viewportY must never undercount the
+   *  physical depth: keeping the peak makes every write land at or above
+   *  its true row. Cleared wherever the frame↔viewport mapping is
+   *  re-anchored (resize reset, full reset, anchored shrink repaint,
+   *  SIGCONT/viewport re-anchor) — those paths start from a known origin. */
+  maxViewportY: number
 }
 
 type Options = {
@@ -66,6 +73,7 @@ export class LogUpdate {
       previousOutput: '',
       reanchorPending: false,
       anchoredPad: 0,
+      maxViewportY: 0,
     }
   }
 
@@ -114,6 +122,9 @@ export class LogUpdate {
     // and alt-screen entry all land here — without the clear, rows the
     // repaint just drew at the viewport top would stay marked unreachable).
     this.state.anchoredPad = 0
+    // Same for the peak-scrollback estimate: the repaint re-anchors the
+    // frame↔viewport mapping from a known origin.
+    this.state.maxViewportY = 0
   }
 
   private renderFullFrame(frame: Frame): Diff {
@@ -211,6 +222,7 @@ export class LogUpdate {
       // Height-only growth is included: the shrink branches below would
       // otherwise mix the old and new viewport heights in their geometry.
       this.state.anchoredPad = 0
+      this.state.maxViewportY = 0
       return fullResetSequence_CAUSES_FLICKER(next, 'resize', stylePool)
     }
 
@@ -232,6 +244,7 @@ export class LogUpdate {
       // (idle gap right after a settle shrink) and its cost is one stale
       // scrollback copy, not a lost paint.
       this.state.anchoredPad = 0
+      this.state.maxViewportY = 0
       return repaintViewportInPlace(prev, next, stylePool)
     }
 
@@ -329,6 +342,10 @@ export class LogUpdate {
       )
       const { patches, anchoredPad } = shrinkAnchoredRepaint(prev, next, stylePool, scrollbackRows)
       this.state.anchoredPad = anchoredPad
+      // The anchored repaint re-lays the frame from the viewport bottom:
+      // the peak estimate is void — the pad takes over as the skip source
+      // of truth.
+      this.state.maxViewportY = 0
       logForDebugging(
         `Anchored shrink repaint (shrink->below): prevHeight=${prev.screen.height}, nextHeight=${next.screen.height}, viewport=${prev.viewport.height}, skip=${anchoredPad}`,
       )
@@ -403,6 +420,9 @@ export class LogUpdate {
           scrollbackRows,
         )
         this.state.anchoredPad = anchoredPad
+        // See the shrink->below branch: the anchored layout supersedes the
+        // plain formula, so the peak estimate is void (pad takes over).
+        this.state.maxViewportY = 0
         logForDebugging(
           `Anchored shrink repaint (shrink to fit): prevHeight=${prev.screen.height}, nextHeight=${next.screen.height}, viewport=${prev.viewport.height}, skip=${anchoredPad}`,
         )
@@ -413,6 +433,7 @@ export class LogUpdate {
       // If we need to clear more lines than fit in the viewport, some are in
       // scrollback, so we need a full reset.
       if (linesToClear > prev.viewport.height) {
+        this.state.maxViewportY = 0
         return fullResetSequence_CAUSES_FLICKER(
           next,
           'offscreen',
@@ -446,8 +467,16 @@ export class LogUpdate {
     // would overcount and skip REACHABLE viewport rows — changes inside
     // the viewport would never paint, scrambling the layout on mid-frame
     // edits like Ctrl+O expansion).
+    //
+    // Inline scrollback is MONOTONIC: a frame shrink above the viewport
+    // erases lines but never un-scrolls the terminal, so the H-V+1
+    // estimate can drop below the physical depth. Keep the PEAK
+    // (maxViewportY) so writes never address rows below their true
+    // position; re-anchor paths (resize reset, full reset, anchored shrink
+    // repaint, SIGCONT/viewport re-anchor) clear it.
     const viewportY = Math.max(
       this.state.anchoredPad,
+      this.state.maxViewportY,
       growing
         ? Math.max(
             0,
@@ -457,6 +486,9 @@ export class LogUpdate {
           next.viewport.height +
           cursorRestoreScroll,
     )
+    if (viewportY > this.state.maxViewportY) {
+      this.state.maxViewportY = viewportY
+    }
 
     // Rows above viewportY live in terminal scrollback and are skipped by the
     // diff loop (see below). Clip the damage region to the visible area so the
