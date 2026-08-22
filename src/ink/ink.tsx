@@ -104,6 +104,13 @@ export default class Ink {
   private backFrame: Frame;
   private lastPoolResetTime = performance.now();
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
+  // Resize 合并：终端拖动窗口时每秒发射几十个事件，每个都触发
+  // markTreeDirty + resetFrames + render + fullResetSequence_CAUSES_FLICKER
+  // 会造成整屏"刷屏"（issue #377）。50ms debounce
+  // 只保留用户窗口"落定"后的最终尺寸做一次完整重排。
+  private resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingResizeCols = 0;
+  private pendingResizeRows = 0;
   // Every scheduled microtask carries the generation that created it. Immediate
   // renders invalidate older trailing work before it can append an old frame.
   private renderGeneration = 0;
@@ -345,6 +352,11 @@ export default class Ink {
   // clear the screen, then the debounce fires and clears again (double
   // blank→paint flicker). useVirtualScroll's height scaling already bounds
   // the per-resize cost; synchronous handling keeps dimensions consistent.
+  //
+  // Update (issue #377): merge resize events behind a 50ms debounce and run
+  // the full invalidation once, at the settled dimensions. The deferred
+  // executor is the only place that updates this.terminalColumns/Rows, so
+  // readers inside the window still see the OLD consistent size.
   private handleResize = () => {
     const cols = this.options.stdout.columns || 80;
     const rows = this.options.stdout.rows || 24;
@@ -352,60 +364,73 @@ export default class Ink {
     // settling). Same-dimension events are no-ops; skip to avoid redundant
     // frame resets and renders.
     if (cols === this.terminalColumns && rows === this.terminalRows) return;
-    noteFrameCause('resize');
-    this.terminalColumns = cols;
-    this.terminalRows = rows;
-    this.altScreenParkPatch = makeAltScreenParkPatch(this.terminalRows);
-
-    // Invalidate every render that was scheduled against the OLD size: a
-    // queued microtask generation or a scroll-drain timer would otherwise
-    // fire after this resize completes and paint a frame computed for the
-    // pre-resize layout (mixed-width rows, off-by-reflow writes). The
-    // re-render below schedules fresh work at the new dimensions.
-    this.renderGeneration++;
-    this.pendingRenderGeneration = null;
-    this.scheduleRender.cancel?.();
-    if (this.drainTimer !== null) {
-      clearTimeout(this.drainTimer);
-      this.drainTimer = null;
+    this.pendingResizeCols = cols;
+    this.pendingResizeRows = rows;
+    if (this.resizeDebounceTimer !== null) {
+      clearTimeout(this.resizeDebounceTimer);
     }
+    this.resizeDebounceTimer = setTimeout(() => {
+      this.resizeDebounceTimer = null;
+      const c = this.pendingResizeCols;
+      const r = this.pendingResizeRows;
+      // Terminal may have settled back to the current size between the
+      // debounce window and the timeout — nothing to do.
+      if (c === this.terminalColumns && r === this.terminalRows) return;
+      noteFrameCause('resize');
+      this.terminalColumns = c;
+      this.terminalRows = r;
+      this.altScreenParkPatch = makeAltScreenParkPatch(this.terminalRows);
 
-    // Every cached measurement in the tree was taken against a width that no
-    // longer exists. Nothing here is "dirty" in the reconciler's sense — no
-    // props changed — so without an explicit sweep the text nodes keep
-    // answering with the sizes they computed for the old terminal, and the
-    // rows that depend on flex arbitration come out assembled from two
-    // different layouts. Setting the root's width alone does not reach them:
-    // markDirty walks upward from a changed node, and here the change is the
-    // constraint every node was measured against.
-    dom.markTreeDirty(this.rootNode);
-
-    // Alt screen: reset frame buffers so the next render repaints from
-    // scratch (prevFrameContaminated → every cell written, wrapped in
-    // BSU/ESU — old content stays visible until the new frame swaps
-    // atomically). Re-assert mouse tracking (some emulators reset it on
-    // resize). Do NOT write ENTER_ALT_SCREEN: iTerm2 treats ?1049h as a
-    // buffer clear even when already in alt — that's the blank flicker.
-    // Self-healing re-entry (if something kicked us out of alt) is handled
-    // by handleResume (SIGCONT) and the sleep-wake detector; resize itself
-    // doesn't exit alt-screen. Do NOT write ERASE_SCREEN: render() below
-    // can take ~80ms; erasing first leaves the screen blank that whole time.
-    if (this.altScreenActive && !this.isPaused && this.options.stdout.isTTY) {
-      if (this.altScreenMouseTracking) {
-        this.options.stdout.write(ENABLE_MOUSE_TRACKING);
+      // Invalidate every render that was scheduled against the OLD size: a
+      // queued microtask generation or a scroll-drain timer would otherwise
+      // fire after this resize completes and paint a frame computed for the
+      // pre-resize layout (mixed-width rows, off-by-reflow writes). The
+      // re-render below schedules fresh work at the new dimensions.
+      this.renderGeneration++;
+      this.pendingRenderGeneration = null;
+      this.scheduleRender.cancel?.();
+      if (this.drainTimer !== null) {
+        clearTimeout(this.drainTimer);
+        this.drainTimer = null;
       }
-      this.resetFramesForAltScreen();
-      this.needsEraseBeforePaint = true;
-    }
 
-    // Re-render the React tree with updated props so the context value changes.
-    // React's commit phase will call onComputeLayout() to recalculate yoga layout
-    // with the new dimensions, then call onRender() to render the updated frame.
-    // We don't call scheduleRender() here because that would render before the
-    // layout is updated, causing a mismatch between viewport and content dimensions.
-    if (this.currentNode !== null) {
-      this.render(this.currentNode);
-    }
+      // Every cached measurement in the tree was taken against a width that no
+      // longer exists. Nothing here is "dirty" in the reconciler's sense — no
+      // props changed — so without an explicit sweep the text nodes keep
+      // answering with the sizes they computed for the old terminal, and the
+      // rows that depend on flex arbitration come out assembled from two
+      // different layouts. Setting the root's width alone does not reach them:
+      // markDirty walks upward from a changed node, and here the change is the
+      // constraint every node was measured against.
+      dom.markTreeDirty(this.rootNode);
+
+      // Alt screen: reset frame buffers so the next render repaints from
+      // scratch (prevFrameContaminated → every cell written, wrapped in
+      // BSU/ESU — old content stays visible until the new frame swaps
+      // atomically). Re-assert mouse tracking (some emulators reset it on
+      // resize). Do NOT write ENTER_ALT_SCREEN: iTerm2 treats ?1049h as a
+      // buffer clear even when already in alt — that's the blank flicker.
+      // Self-healing re-entry (if something kicked us out of alt) is handled
+      // by handleResume (SIGCONT) and the sleep-wake detector; resize itself
+      // doesn't exit alt-screen. Do NOT write ERASE_SCREEN: render() below
+      // can take ~80ms; erasing first leaves the screen blank that whole time.
+      if (this.altScreenActive && !this.isPaused && this.options.stdout.isTTY) {
+        if (this.altScreenMouseTracking) {
+          this.options.stdout.write(ENABLE_MOUSE_TRACKING);
+        }
+        this.resetFramesForAltScreen();
+        this.needsEraseBeforePaint = true;
+      }
+
+      // Re-render the React tree with updated props so the context value changes.
+      // React's commit phase will call onComputeLayout() to recalculate yoga layout
+      // with the new dimensions, then call onRender() to render the updated frame.
+      // We don't call scheduleRender() here because that would render before the
+      // layout is updated, causing a mismatch between viewport and content dimensions.
+      if (this.currentNode !== null) {
+        this.render(this.currentNode);
+      }
+    }, 50);
   };
   resolveExitPromise: () => void = () => {};
   rejectExitPromise: (reason?: Error) => void = () => {};
@@ -1175,6 +1200,10 @@ export default class Ink {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
     }
+    if (this.resizeDebounceTimer !== null) {
+      clearTimeout(this.resizeDebounceTimer);
+      this.resizeDebounceTimer = null;
+    }
     this.app?.detachForShutdown();
     // Shutdown bypasses the normal unmount path, so release the process and
     // stdout listeners here as well. Otherwise a SIGCONT or resize arriving
@@ -1837,6 +1866,10 @@ export default class Ink {
     if (this.drainTimer !== null) {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
+    }
+    if (this.resizeDebounceTimer !== null) {
+      clearTimeout(this.resizeDebounceTimer);
+      this.resizeDebounceTimer = null;
     }
 
     // @ts-ignore -- ported CC build; type drift tolerated updateContainerSync exists in react-reconciler but not in @types/react-reconciler
