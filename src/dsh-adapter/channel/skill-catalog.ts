@@ -126,7 +126,22 @@ export function createSkillCatalog(
             const skill = await registryFor(invoker)?.get(name, { ...viewOptions(invoker), signal })
             if (skill === undefined || !isUserInvocable(skill as SkillSummary)) return { kind: 'error', text: t('skill-unavailable', { name }) }
             if (!deps.owner.current() || invoker !== deps.agent()) return { kind: 'error', text: t('skill-unavailable', { name }) }
-            invoker.followup(createUserMessage({ content: [{ type: 'text', text: renderSkillContent(skill as never) }], source: { kind: 'skill-invocation', name, form: 'instructions' } }))
+            // The kernel path re-submits the whole `/name args` gesture as ONE
+            // user message; this fallback injects the body itself, so the
+            // arguments must ride in that SAME message — a second message
+            // would let the model start on the body before the user's request
+            // lands, and dropping them entirely silently ignored the request
+            // (docs/interaction: "arguments passed through unchanged"). The
+            // body stays the skill-invocation message it always was; only the
+            // user's own words are appended, verbatim, as one extra block.
+            const args = rawInput.trim()
+            invoker.followup(createUserMessage({
+              content: [
+                { type: 'text', text: renderSkillContent(skill as never) },
+                ...(args === '' ? [] : [{ type: 'text' as const, text: args }]),
+              ],
+              source: { kind: 'skill-invocation', name, form: 'instructions' },
+            }))
             return { kind: 'success' }
           },
         })

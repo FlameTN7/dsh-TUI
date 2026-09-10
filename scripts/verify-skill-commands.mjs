@@ -348,14 +348,17 @@ fire('skills/change')
     )
 
     // Fallback path: no `skill` tool (e.g. the minimal preset) → the
-    // handler injects the rendered body directly, as before.
+    // handler injects the rendered body directly. The user's arguments must
+    // ride in that same message (docs: "arguments passed through unchanged");
+    // dropping them silently ignored the request the user typed after the
+    // skill name.
     ctx.get = name => {
       if (name === 'commands') return commandService
       if (name === 'skills') return skillsService
       return undefined
     }
     agent.followups.length = 0
-    const fallbackOutcome = await descriptor.handler({ agent, rawInput: '', signal: undefined })
+    const fallbackOutcome = await descriptor.handler({ agent, rawInput: ' 做年终总结', signal: undefined })
     check('fallback reports success', fallbackOutcome?.kind === 'success', JSON.stringify(fallbackOutcome))
     check(
       'fallback host injection does not cross tui/input',
@@ -369,9 +372,23 @@ fire('skills/change')
       typeof injected?.content?.[0]?.text === 'string' && injected.content[0].text.includes('HELP BODY'),
     )
     check(
+      'fallback message carries the raw arguments verbatim',
+      injected?.content?.[1]?.text === '做年终总结',
+      JSON.stringify(injected?.content),
+    )
+    check(
       'fallback message is marked as a user skill invocation',
       injected?.source?.kind === 'skill-invocation' && injected.source.name === 'i-h',
       JSON.stringify(injected?.source),
+    )
+    // A bare `/i-h` (or whitespace-only arguments) must not grow an empty
+    // trailing block: the body stays the whole message.
+    agent.followups.length = 0
+    await descriptor.handler({ agent, rawInput: '   ', signal: undefined })
+    check(
+      'fallback injects the body alone when no arguments were typed',
+      agent.followups[0]?.content?.length === 1,
+      JSON.stringify(agent.followups[0]?.content),
     )
     if (originalInputHandlers === undefined) decisionRegistry.handlers.delete('tui/input')
     else decisionRegistry.handlers.set('tui/input', originalInputHandlers)
