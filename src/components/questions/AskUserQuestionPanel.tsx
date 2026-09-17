@@ -98,8 +98,8 @@ export type AskUserQuestionPanelProps = {
    * Manual collapse (question panel fold, default Ctrl+K): while
    * collapsed the panel STAYS MOUNTED — draft refs survive, the fold
    * branch sits after every hook — and renders the two-line minimized
-   * bar instead, with its input/caret layers gated off. Esc/Ctrl+C then
-   * mean "expand", never cancel (Chat routes them while folded).
+   * bar instead, with editing/caret layers gated off. Its own input
+   * handler keeps Esc/Ctrl+C as "expand", never cancel, while folded.
    */
   readonly collapsed?: boolean
   /** Expand back from the minimized bar (fold key / Esc / mouse click). */
@@ -368,7 +368,22 @@ export function AskUserQuestionPanel({
     }
   }
 
-  useInput((input, key) => {
+  useInput((input, key, event) => {
+    // The mounted panel owns folding, just like answering: hidden asks
+    // cannot steal approval/dialog keys, and an interrupting questionnaire
+    // still works when Chat yields to an underlying screen's open flag.
+    if (onToggleFold !== undefined && actionMatches('questionFold', input, key)) {
+      onToggleFold()
+      event.stopImmediatePropagation()
+      return
+    }
+    if (collapsed) {
+      if (key.escape || (key.ctrl && input === 'c')) {
+        onExpand?.()
+        event.stopImmediatePropagation()
+      }
+      return
+    }
     if (key.ctrl && input === 'c') {
       onCancel()
       return
@@ -496,7 +511,7 @@ export function AskUserQuestionPanel({
       appendText(input)
       if (!multiSelect) setAttached(options[focusIndex]?.label ?? null)
     }
-  }, { isActive: !collapsed })
+  })
 
   const remaining = total - answered
   /** Fold shortcut label for the hint row (follows /settings remaps). */

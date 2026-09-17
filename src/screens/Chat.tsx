@@ -397,9 +397,6 @@ export function Chat({
     const wasOpen = questionOpenRef.current
     questionOpenRef.current = questionSnapshot !== null
     if (wasOpen && questionSnapshot === null) {
-      // A closed batch leaves no panel to fold — reset the fold state so
-      // the next ask opens expanded.
-      setQuestionMinimized(false)
       for (const summary of questionStore.takeSummaries()) {
         channel.pushLocal(summary.title, summary.lines)
       }
@@ -554,9 +551,10 @@ export function Chat({
   const [themeName, setTheme] = useTheme()
   const { rows: terminalRows } = useTerminalSize()
   const [showAllMessages, setShowAllMessages] = React.useState(false)
-  /** Manual fold of the pending question panel (Ctrl+K default; see
-   *  AskUserQuestionPanel's collapsed prop). Reset when the batch closes. */
-  const [questionMinimized, setQuestionMinimized] = React.useState(false)
+  /** Scope the fold to this question: an aborted ask can promote its queued
+   *  successor without ever publishing an idle (null) snapshot. */
+  const [minimizedQuestionKey, setMinimizedQuestionKey] = React.useState<string | null>(null)
+  const questionMinimized = questionSnapshot !== null && minimizedQuestionKey === questionSnapshot.key
   /** Fold state for the GoalTodoPanel todo section (ctrl/cmd+q or click). */
   const [todoCollapsed, setTodoCollapsed] = React.useState(false)
   const [thinkingVisible, setThinkingVisible] = React.useState(true)
@@ -2755,51 +2753,16 @@ export function Chat({
     // keyboard while one is pending (the panel's own useInput handles
     // ↑/↓/Space/Tab/Enter/Esc; the prompt input is suspended, so nothing
     // else should see these keys).
+    if (approvalSnapshot !== null || dialogSnapshot !== null) return
     if (questionSnapshot !== null) {
-      // Question-panel fold (Ctrl+K default, remappable via /settings):
-      // Chat registers before the panel, so the toggle lives here and
-      // covers both states — expanded folds, minimized expands. Never
-      // matched while no question is pending, so the key keeps its plain
-      // editor meaning (kill-to-end) everywhere else.
-      if (questionSnapshot.question.intent?.kind !== 'plan-review' && actionMatches('questionFold', input, key)) {
-        setQuestionMinimized(previous => !previous)
+      // Only transcript navigation belongs here. The mounted questionnaire
+      // owns fold/expand keys, including when it interrupts another screen.
+      if (questionMinimized && !isSticky && (isPlainReturnInput(input, key) || key.end)) {
+        handle?.scrollToBottom()
         event.stopImmediatePropagation()
-        return
       }
-      // Minimized: Esc/Ctrl+C EXPAND instead of cancelling (anti-footgun —
-      // a folded batch must never be killable by one stray press; the
-      // next press then carries the panel's ordinary meaning), Enter
-      // returns to the bottom when off it, and every remaining key falls
-      // through WITHOUT stop: the transcript-browsing keys with real chat
-      // semantics keep working (wheel and fullscreen PgUp/PgDn handled
-      // above, End/Enter right below), while ↑/↓/Home (no scrolling
-      // meaning in chat mode), typing/Tab/slash/screen-switch/plugin keys
-      // have no live consumer (PromptInput suspended, the panel's useInput
-      // gated off) and die silently.
-      if (questionMinimized) {
-        if (key.escape || (key.ctrl && input === 'c')) {
-          setQuestionMinimized(false)
-          event.stopImmediatePropagation()
-          return
-        }
-        if (isPlainReturnInput(input, key) && !isSticky) {
-          handle?.scrollToBottom()
-          event.stopImmediatePropagation()
-          return
-        }
-        // End = jump to bottom, same less/vim semantics as the ordinary
-        // chat arm below (the fold must not strand the view off-bottom).
-        if (key.end && !isSticky) {
-          handle?.scrollToBottom()
-          event.stopImmediatePropagation()
-          return
-        }
-        return
-      }
-      // Expanded: the panel owns every remaining key (original yield).
       return
     }
-    if (approvalSnapshot !== null || dialogSnapshot !== null) return
     const returnCandidate = isPlainReturnInput(input, key)
     const returnNow = Date.now()
     const plainReturn = returnCandidate && returnNow - lastModalEnterAtRef.current >= 80
@@ -3520,8 +3483,9 @@ export function Chat({
         ? draft => questionStore.backCurrent(draft)
         : undefined}
       collapsed={questionMinimized}
-      onExpand={() => setQuestionMinimized(false)}
-      onToggleFold={() => setQuestionMinimized(previous => !previous)}
+      onExpand={() => setMinimizedQuestionKey(null)}
+      onToggleFold={() => setMinimizedQuestionKey(previous =>
+        previous === questionSnapshot.key ? null : questionSnapshot.key)}
       fullscreen={fullscreen}
     />
   ) : null
