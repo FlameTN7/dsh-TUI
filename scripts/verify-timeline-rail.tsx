@@ -13,7 +13,7 @@
  *   5. 滚到顶：active = 首 tick（pre-turn 内容 → 第一轮），▲ 点击无操作；
  *   6. 悬停第 2 个 tick：左侧弹出圆角预览卡（含 问题 2）；移开消失；
  *   7. resize 到 59 列：rail 隐藏；恢复 100 列：rail 回来。
- *   8. End/回底落定：上滚卸载/装载 !isSticky chrome（回到底部 pill + 置顶头）
+ *   9. End/回底落定：上滚卸载/装载 !isSticky chrome（回到底部 pill + 置顶头）
  *      改变转录视口高度后，rail 必须跟随；该 pass 无滚动通知、不翻转 sticky，
  *      接缝的视口高度通知（onViewportHeightChange）是唯一再渲染信号。
  *
