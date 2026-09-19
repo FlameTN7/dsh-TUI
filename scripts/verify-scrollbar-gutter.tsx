@@ -277,10 +277,15 @@ await wheel(true, 16)
 // ── 4d. End/回到底部落定后同样贴底（pill 点击走同一条 scrollToBottom）──
 {
   await wheel(true, 16)
-  await settle(() => {
-    const s = gutterSnapshot()
-    return s.thumbs.length >= 2 && s.thumbs[s.thumbs.length - 1]! < gutterRange()[1] - 1
+  // 前置交给断言：settle 超时静默返回，滚轮若没把滑块推离底部，End 会从
+  // 贴底态触发，下面的落定断言照样绿——但覆盖的就不是 scrollToBottom 的重钉路径。
+  let off = gutterSnapshot()
+  const offBottom = await settled(() => {
+    off = gutterSnapshot()
+    return off.thumbs.length >= 2 && off.thumbs[off.thumbs.length - 1]! < gutterRange()[1] - 1
   })
+  check('End 前置：滚轮后滑块已离开底部', offBottom,
+    `last=${off.thumbs[off.thumbs.length - 1]} bottom=${gutterRange()[1]}`)
   stdin.write('\x1b[F') // End = handle.scrollToBottom()（Chat 的 key.end 分支）
   let snap = gutterSnapshot()
   let bottom = gutterRange()[1]
@@ -569,16 +574,22 @@ await inst.unmount()
     `last=${hov.last} trackLast=${hov.trackLast} h=${hov.h} (viewport=${hov.trackLast + 1})` +
     ` gutterRows=${hoverRailRows}/${recapScrollNode()?.scrollViewportHeight ?? 0}`)
   // 恢复方向：取消悬停、分隔线回落后，滑块必须贴回真底，且被裁掉的底部
-  // 行回来（高度回到悬停前）。
+  // 行回来（高度回到悬停前）。与压缩方向对称，还要 DOM 轨道行数恢复到
+  // 真实视口——旧像素 blit 回来可骗过屏幕断言，只有 DOM 行数能证明组件
+  // 确实按恢复后的视口重渲染过。
   recapIn.write('\x1b[<35;10;3M')
   let post = recapSnap()
+  let postRailRows = recapGutterRows()
   const restored = await settled(() => {
     if (recapHintVisible()) return false
     post = recapSnap()
-    return !post.pill && post.h >= 2 && post.last === post.trackLast && post.h === pre.h
+    postRailRows = recapGutterRows()
+    return !post.pill && post.h >= 2 && post.last === post.trackLast && post.h === pre.h &&
+      postRailRows === (recapScrollNode()?.scrollViewportHeight ?? 0)
   })
-  check('总结行取消悬停：滑块贴回真底且被裁的行回来', restored,
-    `last=${post.last} trackLast=${post.trackLast} h=${post.h} preH=${pre.h} divider=${post.divider} preDivider=${pre.divider}`)
+  check('总结行取消悬停：滑块贴回真底且被裁的行回来（DOM 轨道同步恢复）', restored,
+    `last=${post.last} trackLast=${post.trackLast} h=${post.h} preH=${pre.h} divider=${post.divider} preDivider=${pre.divider}` +
+    ` gutterRows=${postRailRows}/${recapScrollNode()?.scrollViewportHeight ?? 0}`)
   await recapInst.unmount()
 }
 

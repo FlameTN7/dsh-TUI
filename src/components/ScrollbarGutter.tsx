@@ -124,11 +124,19 @@ export function ScrollbarGutter({
     }
   }, [handle])
 
+  // Geometry the last COMMITTED render painted with: captured during render,
+  // but the ref write happens in the layout effect below — this root is a
+  // ConcurrentRoot, so a render pass can be discarded, and a render-phase
+  // write would leak a frame that never painted into settle()'s diff.
+  const viewport = handle === null ? 0 : handle.getViewportHeight()
+  const content = handle === null ? 0 : handle.getScrollHeight()
+  const scrollTop = handle === null ? 0 : handle.getScrollTop()
+  const geom = handle === null ? null : `${scrollTop}:${content}:${viewport}`
+  React.useLayoutEffect(() => {
+    if (geom !== null) geomRef.current = geom
+  }, [geom])
+
   if (!handle) return null
-  const viewport = handle.getViewportHeight()
-  const content = handle.getScrollHeight()
-  const scrollTop = handle.getScrollTop()
-  geomRef.current = `${scrollTop}:${content}:${viewport}`
   const maxScroll = Math.max(0, content - viewport)
   if (viewport < 2 || content <= viewport || terminalWidth < RAIL_MIN_TERMINAL_WIDTH) return null
 
