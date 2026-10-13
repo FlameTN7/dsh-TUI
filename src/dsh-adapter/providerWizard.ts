@@ -187,7 +187,7 @@ export async function runProviderWizard(
 /**
  * The guided add flow behind `/provider`'s "Add a new provider" branch:
  * mode (catalog / custom / optional OAuth), route, API key, endpoint /
- * protocol, model discovery + selection, confirm, then persist with
+ * protocol, model source + selection, confirm, then persist with
  * credential rollback. Esc anywhere cancels with nothing written.
  */
 async function runAddFlow(
@@ -282,16 +282,20 @@ async function runAddFlow(
     api = answerSelected(endpointAnswer, 'protocol')[0]
   }
 
-  // ── 5. model discovery (draft credential, nothing persisted) ───────
-  notify(t('provider-discovery-running'))
-  const discovery = await discoverRouteModels(host, {
-    ...(isCatalog ? { provider: route } : {}),
-    ...(baseURL !== undefined && baseURL !== '' ? { baseURL } : {}),
-    ...(api !== undefined ? { api } : {}),
-    ...(apiKey !== undefined && apiKey !== '' ? { apiKey } : {}),
-  })
+  // ── 5. model source (manual entry never starts discovery) ─────────
+  const source = await promptModelSource(ask)
+  let discovery = MANUAL_MODEL_DISCOVERY
+  if (source === 'automatic') {
+    notify(t('provider-discovery-running'))
+    discovery = await discoverRouteModels(host, {
+      ...(isCatalog ? { provider: route } : {}),
+      ...(baseURL !== undefined && baseURL !== '' ? { baseURL } : {}),
+      ...(api !== undefined ? { api } : {}),
+      ...(apiKey !== undefined && apiKey !== '' ? { apiKey } : {}),
+    })
+    notifyDiscoveryStatus(notify, discovery)
+  }
   const discovered = discovery.rows
-  notifyDiscoveryStatus(notify, discovery)
 
   // ── 6. model selection ─────────────────────────────────────────────
   let models: string[] = []
@@ -312,6 +316,7 @@ async function runAddFlow(
         })),
         {
           multiSelect: true,
+          hideCustomInput: true,
           modelEditor: capabilities.editor,
           ...(isCatalog && discovery.reason === 'no-base-url'
             ? { detail: t('provider-catalog-snapshot-note', { n: discovered.length }) }
@@ -319,17 +324,15 @@ async function runAddFlow(
         },
       )],
     })
-    models = mergeModelIds(
-      answerSelected(modelsAnswer, 'models'),
-      modelCustomInput(modelsAnswer, isCatalog, discovery, notify),
-    )
+    models = [...answerSelected(modelsAnswer, 'models')]
   } else {
-    notify(t('provider-discovery-failed'), { color: 'warning' })
+    if (source === 'automatic') notify(t('provider-discovery-failed'), { color: 'warning' })
+    const questionId = source === 'manual' ? 'models-manual' : 'models-fallback'
     for (let attempt = 0; attempt < MAX_RETRY && models.length === 0; attempt += 1) {
       const fallbackAnswer = await ask({
-        questions: [textQuestion('models-fallback', t('provider-q-models-fallback'), undefined, capabilities.editor)],
+        questions: [textQuestion(questionId, t('provider-q-models-fallback'), undefined, capabilities.editor)],
       })
-      models = mergeModelIds([], answerText(fallbackAnswer, 'models-fallback'))
+      models = mergeModelIds([], answerText(fallbackAnswer, questionId))
       if (models.length === 0) notify(t('provider-models-required'), { color: 'warning' })
     }
     if (models.length === 0) return 'cancelled'
@@ -668,8 +671,8 @@ async function editWireProtocol(
 }
 
 /**
- * Re-discover the endpoint's models and pick the enabled set (the current
- * ones pre-checked), then patch just the profile's `models`. Kept models
+ * Choose discovery or manual ids, then pick the enabled set (the current
+ * ones pre-checked) and patch just the profile's `models`. Kept models
  * reuse their stored entries unless explicitly edited with Tab. Other
  * per-model fields survive. Stored models stay editable during discovery
  * outages; a route with no rows falls back to manual ids. An empty enabled
@@ -682,27 +685,29 @@ async function editModelList(
   const { host, ask, notify, pushLocal } = deps
   const isCatalog = provider.isCatalog
   const previous = provider.models ?? []
-  // The credential is read only when a live probe will use it: a catalog
-  // A route without a usable live probe (no endpoint, unsupported catalog
-  // protocol, or custom headers the upstream seam cannot carry) stays on the
-  // installed-catalog listing, so no secret is resolved for nothing.
-  const endpointKnown = provider.baseURL !== undefined && provider.baseURL !== ''
-  const liveProbePossible = endpointKnown
-    && !provider.hasCustomHeaders
-    && (!isCatalog || provider.api !== undefined || catalogLiveApi(provider.route) !== undefined)
-  const key = provider.ref !== '' && liveProbePossible
-    ? (provider.shadowed ? host.envValue(provider.ref) : await host.readCredential(provider.ref))
-    : undefined
-  notify(t('provider-discovery-running'))
-  const discovery = await discoverRouteModels(host, {
-    ...(isCatalog ? { provider: provider.route } : {}),
-    ...(provider.baseURL !== undefined ? { baseURL: provider.baseURL } : {}),
-    ...(provider.api !== undefined ? { api: provider.api } : {}),
-    ...(provider.hasCustomHeaders ? { hasCustomHeaders: true } : {}),
-    ...(key !== undefined ? { apiKey: key } : {}),
-  })
+  const source = await promptModelSource(ask)
+  let discovery = MANUAL_MODEL_DISCOVERY
+  if (source === 'automatic') {
+    // Resolve a secret only when a live probe will use it. Manual entry,
+    // catalog-only routes and unsupported probe shapes need no credential.
+    const endpointKnown = provider.baseURL !== undefined && provider.baseURL !== ''
+    const liveProbePossible = endpointKnown
+      && !provider.hasCustomHeaders
+      && (!isCatalog || provider.api !== undefined || catalogLiveApi(provider.route) !== undefined)
+    const key = provider.ref !== '' && liveProbePossible
+      ? (provider.shadowed ? host.envValue(provider.ref) : await host.readCredential(provider.ref))
+      : undefined
+    notify(t('provider-discovery-running'))
+    discovery = await discoverRouteModels(host, {
+      ...(isCatalog ? { provider: provider.route } : {}),
+      ...(provider.baseURL !== undefined ? { baseURL: provider.baseURL } : {}),
+      ...(provider.api !== undefined ? { api: provider.api } : {}),
+      ...(provider.hasCustomHeaders ? { hasCustomHeaders: true } : {}),
+      ...(key !== undefined ? { apiKey: key } : {}),
+    })
+    notifyDiscoveryStatus(notify, discovery)
+  }
   const discovered = discovery.rows
-  notifyDiscoveryStatus(notify, discovery)
 
   const discoveredById = new Map(discovered.map(model => [model.id, model] as const))
   const storedById = new Map((provider.modelEntries ?? [])
@@ -715,17 +720,21 @@ async function editModelList(
   const capabilities = createProviderModelEditor(entryFor, discoveredById)
   let models: string[]
   if (discovered.length === 0 && previous.length === 0) {
-    notify(t('provider-discovery-failed'), { color: 'warning' })
+    if (source === 'automatic') notify(t('provider-discovery-failed'), { color: 'warning' })
+    const questionId = source === 'manual' ? 'models-manual' : 'models-fallback'
     const fallbackAnswer = await ask({
-      questions: [textQuestion('models-fallback', t('provider-q-models-fallback'), undefined, capabilities.editor)],
+      questions: [textQuestion(questionId, t('provider-q-models-fallback'), undefined, capabilities.editor)],
     })
-    models = mergeModelIds([], answerText(fallbackAnswer, 'models-fallback'))
+    models = mergeModelIds([], answerText(fallbackAnswer, questionId))
     if (models.length === 0) {
       notify(t('provider-edit-no-changes'))
       return 'cancelled'
     }
   } else {
-    if (discovered.length === 0) notify(t('provider-models-stored-only'), { color: 'warning' })
+    if (source === 'automatic' && discovered.length === 0) {
+      notify(t('provider-models-stored-only'), { color: 'warning' })
+    }
+    const allowManualInput = source === 'manual' || discovered.length === 0
     // Existing models neither the catalog nor the endpoint advertises
     // (renamed, beta pulled, transient discovery gap) must still appear in
     // the panel, pre-checked and marked: options built from `discovered`
@@ -743,13 +752,14 @@ async function editModelList(
       .filter(id => !discoveredById.has(id))
       .map(id => ({
         label: id,
-        description: t('provider-row-model-missing'),
+        ...(source === 'automatic' ? { description: t('provider-row-model-missing') } : {}),
       }))
     const modelsAnswer = await ask({
-      questions: [optionQuestion('models', t('provider-q-models'),
+      questions: [optionQuestion('models', allowManualInput ? t('provider-q-models-manual') : t('provider-q-models'),
         [...optionRows, ...missingRows],
         {
           multiSelect: true,
+          hideCustomInput: !allowManualInput,
           defaultSelected: previous,
           modelEditor: capabilities.editor,
           ...(isCatalog && discovery.reason === 'no-base-url'
@@ -760,7 +770,7 @@ async function editModelList(
     })
     models = mergeModelIds(
       answerSelected(modelsAnswer, 'models'),
-      modelCustomInput(modelsAnswer, isCatalog, discovery, notify),
+      allowManualInput ? answerText(modelsAnswer, 'models') : '',
     )
   }
 
@@ -1107,18 +1117,15 @@ function mergeModelIds(selected: readonly string[], custom: string): string[] {
   return ids
 }
 
-function modelCustomInput(
-  answer: AskUserQuestionAnswer,
-  isCatalog: boolean,
-  discovery: RouteDiscovery,
-  notify: ProviderWizardDeps['notify'],
-): string {
-  const custom = answerText(answer, 'models')
-  if (custom !== '' && isCatalog && discovery.reason === 'unsupported-catalog') {
-    notify(t('provider-catalog-models-only'), { color: 'warning' })
-    return ''
-  }
-  return custom
+/** Ask before discovery so manual ids never wait for, or share, a live lookup. */
+async function promptModelSource(ask: ProviderWizardDeps['ask']): Promise<'automatic' | 'manual'> {
+  const answer = await ask({
+    questions: [optionQuestion('model-source', t('provider-q-model-source'), [
+      { label: t('provider-opt-models-automatic'), description: t('provider-opt-models-automatic-desc') },
+      { label: t('provider-opt-models-manual'), description: t('provider-opt-models-manual-desc') },
+    ], { hideCustomInput: true })],
+  })
+  return answerSelected(answer, 'model-source')[0] === t('provider-opt-models-manual') ? 'manual' : 'automatic'
 }
 
 /** How the live endpoint probe of one discovery pass went. */
@@ -1140,6 +1147,13 @@ export interface RouteDiscovery {
   readonly catalog: RouteDiscoveryCatalog
   readonly live: RouteDiscoveryLive
   readonly reason?: RouteDiscoveryReason
+}
+
+const MANUAL_MODEL_DISCOVERY: RouteDiscovery = {
+  rows: [],
+  catalogIds: new Set(),
+  catalog: 'unavailable',
+  live: 'unavailable',
 }
 
 /**

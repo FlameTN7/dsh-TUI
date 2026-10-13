@@ -74,7 +74,7 @@ async function exercise(fullscreen: boolean, columns: number, rows: number) {
   const question = {
     id: 'models', question: '选择模型', multiSelect: true,
     options: [{ label: 'model-a' }, { label: 'model-b' }],
-    defaultSelected: ['model-a'], modelEditor: staged.editor,
+    defaultSelected: ['model-a'], modelEditor: staged.editor, hideCustomInput: true,
   }
   let answered = false
   let cancelled = false
@@ -108,6 +108,7 @@ async function exercise(fullscreen: boolean, columns: number, rows: number) {
   }
   try {
     await waitFor(() => screen().includes('model-a'), 'model list appears')
+    assert.ok(!screen().includes('自定义回答'), 'automatic model list has no manual input row')
     stdin.write('\t')
     await waitFor(() => screen().includes('编辑模型能力') && screen().includes('4000'), 'Tab opens focused model capabilities')
     assert.equal(answered, false)

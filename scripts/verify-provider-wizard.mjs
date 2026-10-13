@@ -80,8 +80,8 @@
  * 38. the add flow on a catalog route with a typed baseURL merges the same
  *    way, and the written profile carries capacities only for the
  *    endpoint-only id.
- * 39. mixed-protocol catalogs skip the unsafe live probe and reject free-typed
- *    endpoint-only ids.
+ * 39. mixed-protocol catalogs skip the unsafe live probe; automatic selection
+ *    accepts only the model list, without a custom input row.
  * 40. catalog routes with custom headers explicitly fall back to the snapshot.
  * 41. a failed catalog lookup never lets live capacities enter the profile.
  * 42. the Anthropic catalog uses the anthropic-messages live probe protocol.
@@ -134,6 +134,7 @@ function makeDeps(script, options = {}) {
     asks: [],
     /** every discoverModels request, in order (shape regressions). */
     discoverRequests: [],
+    credentialReads: [],
     /** question id → hideCustomInput flag as submitted (panel contract). */
     hideFlags: {},
     /** question id → option descriptions, for catalog row-shape regressions. */
@@ -182,7 +183,10 @@ function makeDeps(script, options = {}) {
     },
     envShadows: ref => options.shadow === ref,
     envValue: ref => options.shadow === ref ? (options.shadowValue ?? 'sk-from-env') : undefined,
-    readCredential: async ref => options.storedCredentials?.[ref],
+    readCredential: async ref => {
+      calls.credentialReads.push(ref)
+      return options.storedCredentials?.[ref]
+    },
     writeCredential: (ref, value) => {
       if (options.credentialThrows) throw new Error('credential rejected')
       calls.credentials.push([ref, value])
@@ -219,7 +223,9 @@ function makeDeps(script, options = {}) {
         calls.defaults[question.id] = question.defaultSelected ?? []
         const spec = question.id === 'action' && script['action'] === undefined
           ? ACTION_ADD
-          : specFor(question.id)
+          : question.id === 'model-source' && script['model-source'] === undefined
+            ? SOURCE_AUTOMATIC
+            : specFor(question.id)
         if (spec === undefined) throw new Error(`unscripted question: ${question.id}`)
         if (spec === 'cancel') throw CANCEL
         for (const [id, fields] of Object.entries(spec.edits ?? {})) {
@@ -259,6 +265,8 @@ const MENU_BASEURL = { selected: [t('provider-opt-edit-baseurl')] }
 const MENU_PROTOCOL = { selected: [t('provider-opt-edit-protocol')] }
 const MENU_MODELS = { selected: [t('provider-opt-edit-models')] }
 const MENU_DELETE = { selected: [t('provider-opt-edit-delete')] }
+const SOURCE_AUTOMATIC = { selected: [t('provider-opt-models-automatic')] }
+const SOURCE_MANUAL = { selected: [t('provider-opt-models-manual')] }
 
 // 1. catalog happy path: discovery + narrowed models + switch declined.
 {
@@ -284,7 +292,7 @@ const MENU_DELETE = { selected: [t('provider-opt-edit-delete')] }
   check('1 catalog: profile shape (no api/baseURL, id-only models)',
     eq(calls.profiles, [['deepseek', {
       apiKeyEnv: 'DEEPSEEK_API_KEY',
-      models: [{ id: 'deepseek-chat' }, { id: 'deepseek-extra' }],
+      models: [{ id: 'deepseek-chat' }],
     }]]),
     JSON.stringify(calls.profiles))
   check('1 catalog: keep → no switch', eq(calls.switches, []))
@@ -497,7 +505,7 @@ const MENU_DELETE = { selected: [t('provider-opt-edit-delete')] }
 }
 
 // 12. hideCustomInput contract: pure option questions carry the flag, text
-// questions and the models multi-select keep the input row.
+// questions keep the input row; automatic model selection hides it.
 {
   const catalog = makeDeps({
     'mode': MODE_CATALOG,
@@ -516,7 +524,8 @@ const MENU_DELETE = { selected: [t('provider-opt-edit-delete')] }
       'catalog': true,
       'apikey': false,
       'baseurl-choice': true,
-      'models': false,
+      'model-source': true,
+      'models': true,
       'confirm': true,
       'switch': true,
     }),
@@ -544,6 +553,7 @@ const MENU_DELETE = { selected: [t('provider-opt-edit-delete')] }
       'apikey': false,
       'baseurl': false,
       'protocol': true,
+      'model-source': true,
       'models-fallback': false,
       'confirm': true,
       'switch': true,
@@ -1742,6 +1752,78 @@ for (const invalid of [
     ...CUSTOM_EDIT, models: { selected: ['chosen'], edits: { chosen: {} } },
   }, { configured: [CAPABILITY_PROVIDER], discovered: [{ id: 'chosen', contextWindow: 800000 }] })
   check('52 no-op capability save: zero writes', await runProviderWizard(deps) === 'cancelled' && calls.mutations.length === 0)
+}
+
+// 53. Manual add never starts discovery, even on an endpoint that cannot list models.
+for (const catalog of [false, true]) {
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_ADD,
+    ...(catalog ? { mode: MODE_CATALOG, catalog: { selected: ['openai'] }, 'baseurl-choice': SKIP_BASEURL } : {}),
+    'model-source': SOURCE_MANUAL,
+    'models-manual': { custom: 'private-model, private-model，other', edits: { 'private-model': CAPABILITIES } },
+  }, { discoverThrows: true })
+  check(`53 manual add (${catalog}): added`, await runProviderWizard(deps) === 'added')
+  check(`53 manual add (${catalog}): no discovery or discovery notices`,
+    calls.discoverRequests.length === 0 && calls.notifications.every(n =>
+      n.text !== t('provider-discovery-running') && n.text !== t('provider-discovery-failed')))
+  check(`53 manual add (${catalog}): ids deduplicated and capabilities saved`,
+    eq(calls.profiles[0]?.[1]?.models, [{ id: 'private-model', ...CAPABILITIES }, { id: 'other' }]),
+    JSON.stringify(calls.profiles))
+}
+
+// 54. Manual edits retain selected entries verbatim and never resolve probe credentials.
+{
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_EDIT,
+    'model-source': SOURCE_MANUAL,
+    models: { selected: ['chosen'], custom: 'private-model', edits: { 'private-model': CAPABILITIES } },
+  }, { configured: [{ ...CAPABILITY_PROVIDER, ref: 'GATEWAY_API_KEY' }], discoverThrows: true })
+  check('54 manual edit: updated', await runProviderWizard(deps) === 'updated')
+  check('54 manual edit: skips discovery and credential reads',
+    calls.discoverRequests.length === 0 && calls.credentialReads.length === 0)
+  check('54 manual edit: existing selection retained, input row available',
+    eq(calls.defaults.models, ['chosen']) && calls.hideFlags.models === false)
+  check('54 manual edit: stored and new model fields survive', eq(calls.mutations, [[
+    'capability-gateway', [{ op: 'set', path: ['models'], value: [
+      STORED_CAPABILITY_MODEL, { id: 'private-model', ...CAPABILITIES },
+    ] }],
+  ]]), JSON.stringify(calls.mutations))
+}
+
+// 55. Cancelling the source choice does not fetch, read secrets or write configuration.
+for (const edit of [false, true]) {
+  const { deps, calls } = makeDeps({
+    ...(edit ? CUSTOM_EDIT : CUSTOM_ADD),
+    'model-source': 'cancel',
+  }, { configured: [{ ...CAPABILITY_PROVIDER, ref: 'GATEWAY_API_KEY' }] })
+  check(`55 source cancellation (${edit}): cancelled`, await runProviderWizard(deps) === 'cancelled')
+  check(`55 source cancellation (${edit}): no side effects`,
+    calls.discoverRequests.length === 0 && calls.credentialReads.length === 0
+      && calls.credentials.length === 0 && calls.profiles.length === 0 && calls.mutations.length === 0)
+}
+
+// 56. A delayed automatic lookup owns the step until it resolves: no manual question
+// can steal focus, and the resulting list cannot submit a hidden custom answer.
+{
+  let finishDiscovery
+  let startedDiscovery
+  const started = new Promise(resolve => { startedDiscovery = resolve })
+  const pending = new Promise(resolve => { finishDiscovery = resolve })
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_ADD,
+    'model-source': SOURCE_AUTOMATIC,
+    models: { selected: ['listed'], custom: 'must-not-be-saved' },
+  }, { discover: () => { startedDiscovery(); return pending } })
+  const result = runProviderWizard(deps)
+  await started
+  check('56 delayed discovery: source chosen before request', calls.asks.at(-1) === 'model-source')
+  check('56 delayed discovery: no model-input question while fetching',
+    !calls.asks.some(id => id === 'models' || id === 'models-manual' || id === 'models-fallback'))
+  finishDiscovery([{ id: 'listed', contextWindow: 32000 }])
+  check('56 delayed discovery: completes after response', await result === 'added')
+  check('56 delayed discovery: automatic list hides custom input', calls.hideFlags.models === true)
+  check('56 delayed discovery: hidden custom answer is ignored',
+    eq(calls.profiles[0]?.[1]?.models, [{ id: 'listed', contextWindow: 32000 }]))
 }
 
 console.log(failed === 0 ? '\nAll provider-wizard checks passed' : `\n${failed} check(s) FAILED`)
