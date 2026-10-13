@@ -80,8 +80,8 @@
  * 38. the add flow on a catalog route with a typed baseURL merges the same
  *    way, and the written profile carries capacities only for the
  *    endpoint-only id.
- * 39. mixed-protocol catalogs skip the unsafe live probe and reject free-typed
- *    endpoint-only ids.
+ * 39. mixed-protocol catalogs skip the unsafe live probe; automatic selection
+ *    accepts only the model list, without a custom input row.
  * 40. catalog routes with custom headers explicitly fall back to the snapshot.
  * 41. a failed catalog lookup never lets live capacities enter the profile.
  * 42. the Anthropic catalog uses the anthropic-messages live probe protocol.
@@ -134,8 +134,11 @@ function makeDeps(script, options = {}) {
     asks: [],
     /** every discoverModels request, in order (shape regressions). */
     discoverRequests: [],
+    credentialReads: [],
     /** question id → hideCustomInput flag as submitted (panel contract). */
     hideFlags: {},
+    /** question id → customInputFirst flag as submitted (panel contract). */
+    firstFlags: {},
     /** question id → option descriptions, for catalog row-shape regressions. */
     optionDescriptions: {},
     /** question id → detail string, for confirm-summary regressions. */
@@ -182,7 +185,10 @@ function makeDeps(script, options = {}) {
     },
     envShadows: ref => options.shadow === ref,
     envValue: ref => options.shadow === ref ? (options.shadowValue ?? 'sk-from-env') : undefined,
-    readCredential: async ref => options.storedCredentials?.[ref],
+    readCredential: async ref => {
+      calls.credentialReads.push(ref)
+      return options.storedCredentials?.[ref]
+    },
     writeCredential: (ref, value) => {
       if (options.credentialThrows) throw new Error('credential rejected')
       calls.credentials.push([ref, value])
@@ -212,6 +218,7 @@ function makeDeps(script, options = {}) {
       for (const question of request.questions) {
         calls.asks.push(question.id)
         calls.hideFlags[question.id] = question.hideCustomInput === true
+        calls.firstFlags[question.id] = question.customInputFirst === true
         calls.optionDescriptions[question.id] = Object.fromEntries(
           (question.options ?? []).map(option => [option.label, option.description]),
         )
@@ -284,7 +291,7 @@ const MENU_DELETE = { selected: [t('provider-opt-edit-delete')] }
   check('1 catalog: profile shape (no api/baseURL, id-only models)',
     eq(calls.profiles, [['deepseek', {
       apiKeyEnv: 'DEEPSEEK_API_KEY',
-      models: [{ id: 'deepseek-chat' }, { id: 'deepseek-extra' }],
+      models: [{ id: 'deepseek-extra' }, { id: 'deepseek-chat' }],
     }]]),
     JSON.stringify(calls.profiles))
   check('1 catalog: keep → no switch', eq(calls.switches, []))
@@ -497,7 +504,7 @@ const MENU_DELETE = { selected: [t('provider-opt-edit-delete')] }
 }
 
 // 12. hideCustomInput contract: pure option questions carry the flag, text
-// questions and the models multi-select keep the input row.
+// questions keep the input row; automatic model selection hides it.
 {
   const catalog = makeDeps({
     'mode': MODE_CATALOG,
@@ -521,6 +528,9 @@ const MENU_DELETE = { selected: [t('provider-opt-edit-delete')] }
       'switch': true,
     }),
     JSON.stringify(catalog.calls.hideFlags))
+  check('12 customInputFirst only on the model list',
+    eq(Object.entries(catalog.calls.firstFlags).filter(([, flag]) => flag).map(([id]) => id), ['models']),
+    JSON.stringify(catalog.calls.firstFlags))
   check('12 catalog omits a duplicate display name',
     catalog.calls.optionDescriptions.catalog?.['same-name'] === undefined,
     JSON.stringify(catalog.calls.optionDescriptions.catalog))
@@ -1472,8 +1482,9 @@ function oauthStub(behavior = {}) {
 }
 
 // 39. A mixed-protocol catalog (for example openrouter) has no safe protocol
-// for an unnamed live probe. Keep the installed catalog, do not accept a
-// free-typed endpoint-only id, and do not attach endpoint capacities.
+// for an unnamed live probe. Keep the installed catalog, keep the free-typed
+// id (with a warning instead of a silent drop), and do not attach endpoint
+// capacities.
 {
   const { deps, calls } = makeDeps({
     'action': ACTION_EDIT,
@@ -1495,9 +1506,14 @@ function oauthStub(behavior = {}) {
   check('39 mixed catalog: explicit warning explains the fallback',
     calls.notifications.some(n => n.color === 'warning' && n.text === t('provider-live-fetch-unavailable')),
     JSON.stringify(calls.notifications))
-  check('39 mixed catalog: endpoint-only custom id is not written',
-    eq(calls.mutations, [['openrouter', [{ op: 'set', path: ['models'], value: [{ id: 'or-known' }] }]]]),
+  check('39 mixed catalog: typed id is kept first, capacities are not attached',
+    eq(calls.mutations, [['openrouter', [{ op: 'set', path: ['models'], value: [
+      { id: 'or-online-only' }, { id: 'or-known' },
+    ] }]]]),
     JSON.stringify(calls.mutations))
+  check('39 mixed catalog: warning says the typed id may be uncallable',
+    calls.notifications.some(n => n.color === 'warning' && n.text === t('provider-catalog-models-only')),
+    JSON.stringify(calls.notifications))
 }
 
 // 40. A catalog route with custom headers cannot safely use the anonymous
@@ -1742,6 +1758,104 @@ for (const invalid of [
     ...CUSTOM_EDIT, models: { selected: ['chosen'], edits: { chosen: {} } },
   }, { configured: [CAPABILITY_PROVIDER], discovered: [{ id: 'chosen', contextWindow: 800000 }] })
   check('52 no-op capability save: zero writes', await runProviderWizard(deps) === 'cancelled' && calls.mutations.length === 0)
+}
+
+// 53. One model question: the endpoint's rows plus first-row manual ids.
+// Manual ids lead the merged list and are never dropped.
+for (const catalog of [false, true]) {
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_ADD,
+    ...(catalog ? { mode: MODE_CATALOG, catalog: { selected: ['openai'] }, 'baseurl-choice': SKIP_BASEURL } : {}),
+    models: { selected: ['listed'], custom: 'private-model, private-model，other', edits: { 'private-model': CAPABILITIES } },
+  }, { discovered: [{ id: 'listed', contextWindow: 32000 }] })
+  check(`53 merged list (${catalog}): added`, await runProviderWizard(deps) === 'added')
+  check(`53 merged list (${catalog}): no separate source question`,
+    !calls.asks.includes('model-source'))
+  check(`53 merged list (${catalog}): manual row leads the options`,
+    calls.firstFlags.models === true && calls.hideFlags.models === false)
+  check(`53 merged list (${catalog}): manual ids first, deduped, capabilities saved`,
+    eq(calls.profiles[0]?.[1]?.models, [
+      { id: 'private-model', ...CAPABILITIES },
+      { id: 'other' },
+      catalog ? { id: 'listed' } : { id: 'listed', contextWindow: 32000 },
+    ]),
+    JSON.stringify(calls.profiles))
+}
+
+// 54. Editing keeps the first-row input, still probes once with its credential,
+// and merges the typed id ahead of the stored selection.
+{
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_EDIT,
+    models: { selected: ['chosen'], custom: 'private-model', edits: { 'private-model': CAPABILITIES } },
+  }, { configured: [{ ...CAPABILITY_PROVIDER, ref: 'GATEWAY_API_KEY' }], discovered: [{ id: 'chosen', contextWindow: 4000 }] })
+  check('54 merged edit: updated', await runProviderWizard(deps) === 'updated')
+  check('54 merged edit: discovery runs once with the probe credential',
+    calls.discoverRequests.length === 1 && eq(calls.credentialReads, ['GATEWAY_API_KEY']))
+  check('54 merged edit: input row leads and stored models stay pre-checked',
+    calls.firstFlags.models === true && calls.hideFlags.models === false
+      && eq(calls.defaults.models, ['chosen']))
+  check('54 merged edit: manual id first, stored entry preserved', eq(calls.mutations, [[
+    'capability-gateway', [{ op: 'set', path: ['models'], value: [
+      { id: 'private-model', ...CAPABILITIES }, STORED_CAPABILITY_MODEL,
+    ] }],
+  ]]), JSON.stringify(calls.mutations))
+}
+
+// 55. Cancelling the model question aborts before any write.
+for (const edit of [false, true]) {
+  const { deps, calls } = makeDeps({
+    ...(edit ? CUSTOM_EDIT : CUSTOM_ADD),
+    models: 'cancel',
+  }, { configured: [{ ...CAPABILITY_PROVIDER, ref: 'GATEWAY_API_KEY' }], discovered: [{ id: 'chosen' }] })
+  check(`55 model cancellation (${edit}): cancelled`, await runProviderWizard(deps) === 'cancelled')
+  check(`55 model cancellation (${edit}): no side effects`,
+    calls.credentials.length === 0 && calls.profiles.length === 0 && calls.mutations.length === 0)
+}
+
+// 56. A delayed lookup owns the step until it resolves: no question is asked
+// while fetching, and the resolved list still takes first-row manual ids.
+{
+  let finishDiscovery
+  let startedDiscovery
+  const started = new Promise(resolve => { startedDiscovery = resolve })
+  const pending = new Promise(resolve => { finishDiscovery = resolve })
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_ADD,
+    models: { selected: ['listed'], custom: 'manual-kept' },
+  }, { discover: () => { startedDiscovery(); return pending } })
+  const result = runProviderWizard(deps)
+  await started
+  check('56 delayed discovery: no question while fetching',
+    !calls.asks.some(id => id === 'models' || id === 'models-fallback' || id === 'model-source'))
+  finishDiscovery([{ id: 'listed', contextWindow: 32000 }])
+  check('56 delayed discovery: completes after response', await result === 'added')
+  check('56 delayed discovery: manual row leads and the typed id is kept',
+    calls.firstFlags.models === true && calls.hideFlags.models === false
+      && eq(calls.profiles[0]?.[1]?.models, [
+        { id: 'manual-kept' }, { id: 'listed', contextWindow: 32000 },
+      ]), JSON.stringify(calls.profiles))
+}
+
+// 57. A catalog route whose protocol cannot be determined keeps the typed id
+// and warns instead of silently dropping it.
+{
+  const { deps, calls } = makeDeps({
+    mode: MODE_CATALOG,
+    catalog: { selected: ['same-name'] },
+    apikey: { custom: 'sk-unlisted' },
+    'baseurl-choice': { selected: [t('provider-opt-baseurl-input')] },
+    baseurl: { custom: 'https://relay.example/v1' },
+    models: { selected: ['gpt-5'], custom: 'unlisted-model' },
+    confirm: CONFIRM_WRITE,
+    switch: KEEP_MODEL,
+  }, { discovered: [{ id: 'gpt-5' }] })
+  check('57 unsupported catalog: added', await runProviderWizard(deps) === 'added')
+  check('57 unsupported catalog: typed id kept and first',
+    eq(calls.profiles[0]?.[1]?.models, [{ id: 'unlisted-model' }, { id: 'gpt-5' }]),
+    JSON.stringify(calls.profiles))
+  check('57 unsupported catalog: warning explains the protocol gap',
+    calls.notifications.some(n => n.text === t('provider-catalog-models-only')))
 }
 
 console.log(failed === 0 ? '\nAll provider-wizard checks passed' : `\n${failed} check(s) FAILED`)

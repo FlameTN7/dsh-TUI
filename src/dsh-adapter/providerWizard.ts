@@ -92,6 +92,7 @@ function answerSelected(answer: AskUserQuestionAnswer, id: string): readonly str
  */
 type WizardQuestionItem = AskUserQuestionItem & {
   hideCustomInput?: boolean
+  customInputFirst?: boolean
   defaultSelected?: readonly string[]
   modelEditor?: ProviderModelEditor
 }
@@ -104,6 +105,7 @@ function optionQuestion(
     detail?: string
     multiSelect?: boolean
     hideCustomInput?: boolean
+    customInputFirst?: boolean
     defaultSelected?: readonly string[]
     modelEditor?: ProviderModelEditor
   },
@@ -116,6 +118,7 @@ function optionQuestion(
     ...(extra?.detail !== undefined ? { detail: extra.detail } : {}),
     ...(extra?.multiSelect ? { multiSelect: true } : {}),
     ...(extra?.hideCustomInput ? { hideCustomInput: true } : {}),
+    ...(extra?.customInputFirst ? { customInputFirst: true } : {}),
     ...(extra?.defaultSelected !== undefined ? { defaultSelected: extra.defaultSelected } : {}),
     ...(extra?.modelEditor !== undefined ? { modelEditor: extra.modelEditor } : {}),
   }
@@ -293,7 +296,7 @@ async function runAddFlow(
   const discovered = discovery.rows
   notifyDiscoveryStatus(notify, discovery)
 
-  // ── 6. model selection ─────────────────────────────────────────────
+  // ── 6. model selection: one list, manual ids on the first row ──────
   let models: string[] = []
   const discoveredById = new Map(discovered.map(model => [model.id, model] as const))
   const capabilities = createProviderModelEditor(
@@ -312,6 +315,7 @@ async function runAddFlow(
         })),
         {
           multiSelect: true,
+          customInputFirst: true,
           modelEditor: capabilities.editor,
           ...(isCatalog && discovery.reason === 'no-base-url'
             ? { detail: t('provider-catalog-snapshot-note', { n: discovered.length }) }
@@ -319,10 +323,9 @@ async function runAddFlow(
         },
       )],
     })
-    models = mergeModelIds(
-      answerSelected(modelsAnswer, 'models'),
-      modelCustomInput(modelsAnswer, isCatalog, discovery, notify),
-    )
+    const typed = answerText(modelsAnswer, 'models')
+    models = mergeModelIds(answerSelected(modelsAnswer, 'models'), typed)
+    warnCatalogManualIds(isCatalog, discovery, typed, notify)
   } else {
     notify(t('provider-discovery-failed'), { color: 'warning' })
     for (let attempt = 0; attempt < MAX_RETRY && models.length === 0; attempt += 1) {
@@ -682,9 +685,9 @@ async function editModelList(
   const { host, ask, notify, pushLocal } = deps
   const isCatalog = provider.isCatalog
   const previous = provider.models ?? []
-  // The credential is read only when a live probe will use it: a catalog
-  // A route without a usable live probe (no endpoint, unsupported catalog
-  // protocol, or custom headers the upstream seam cannot carry) stays on the
+  // The credential is read only when a live probe will use it: a route
+  // without a usable live probe (no endpoint, unsupported catalog protocol,
+  // or custom headers the upstream seam cannot carry) stays on the
   // installed-catalog listing, so no secret is resolved for nothing.
   const endpointKnown = provider.baseURL !== undefined && provider.baseURL !== ''
   const liveProbePossible = endpointKnown
@@ -741,15 +744,13 @@ async function editModelList(
     }))
     const missingRows = previous
       .filter(id => !discoveredById.has(id))
-      .map(id => ({
-        label: id,
-        description: t('provider-row-model-missing'),
-      }))
+      .map(id => ({ label: id, description: t('provider-row-model-missing') }))
     const modelsAnswer = await ask({
       questions: [optionQuestion('models', t('provider-q-models'),
         [...optionRows, ...missingRows],
         {
           multiSelect: true,
+          customInputFirst: true,
           defaultSelected: previous,
           modelEditor: capabilities.editor,
           ...(isCatalog && discovery.reason === 'no-base-url'
@@ -758,10 +759,9 @@ async function editModelList(
         },
       )],
     })
-    models = mergeModelIds(
-      answerSelected(modelsAnswer, 'models'),
-      modelCustomInput(modelsAnswer, isCatalog, discovery, notify),
-    )
+    const typed = answerText(modelsAnswer, 'models')
+    models = mergeModelIds(answerSelected(modelsAnswer, 'models'), typed)
+    warnCatalogManualIds(isCatalog, discovery, typed, notify)
   }
 
   if (!isCatalog && models.length === 0) {
@@ -1097,28 +1097,32 @@ async function promptRouteId(
   return ''
 }
 
-/** Merge multi-select picks with comma/space-separated custom input, deduped. */
+/** Merge the first-row manual ids with the checked list, deduped. Manual
+ *  ids lead so the input row's content stays where the user typed it. */
 function mergeModelIds(selected: readonly string[], custom: string): string[] {
-  const ids = [...selected]
+  const ids: string[] = []
   for (const piece of custom.split(/[,，\s]+/)) {
     const id = piece.trim()
     if (id !== '' && !ids.includes(id)) ids.push(id)
   }
+  for (const id of selected) {
+    if (!ids.includes(id)) ids.push(id)
+  }
   return ids
 }
 
-function modelCustomInput(
-  answer: AskUserQuestionAnswer,
+/** A catalog route whose protocol cannot be determined still keeps the
+ *  typed ids; the warning says the runtime has no wire protocol for a
+ *  model the catalog does not describe. */
+function warnCatalogManualIds(
   isCatalog: boolean,
   discovery: RouteDiscovery,
+  custom: string,
   notify: ProviderWizardDeps['notify'],
-): string {
-  const custom = answerText(answer, 'models')
+): void {
   if (custom !== '' && isCatalog && discovery.reason === 'unsupported-catalog') {
     notify(t('provider-catalog-models-only'), { color: 'warning' })
-    return ''
   }
-  return custom
 }
 
 /** How the live endpoint probe of one discovery pass went. */

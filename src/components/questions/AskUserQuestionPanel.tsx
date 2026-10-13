@@ -79,6 +79,10 @@ export type AskUserQuestionPanelProps = {
      *  (local wizards, e.g. /provider). Ignored when there are no options —
      *  a text-only question would otherwise be unanswerable. */
     readonly hideCustomInput?: boolean
+    /** Render the free-text input row above the options instead of below
+     *  them (the /provider model list puts manual ids first). Ignored when
+     *  the row is hidden or there are no options. */
+    readonly customInputFirst?: boolean
     /** Pre-checked option labels (multi-select) / default-focused option
      *  (single-select) shown on first display, before any saved draft — e.g.
      *  the models already enabled on a provider being edited. */
@@ -177,6 +181,7 @@ export function AskUserQuestionPanel({
   const options = question.options ?? []
   const multiSelect = question.multiSelect === true
   const hideCustomInput = question.hideCustomInput === true && options.length > 0
+  const customInputFirst = question.customInputFirst === true && !hideCustomInput && options.length > 0
   const modelEditor = typeof question.modelEditor?.read === 'function'
     && typeof question.modelEditor.save === 'function' && typeof question.modelEditor.edited === 'function'
     ? question.modelEditor : undefined
@@ -743,6 +748,7 @@ export function AskUserQuestionPanel({
 
   const renderOptions = (): React.ReactNode => (
     <Box flexDirection="column" marginTop={1}>
+      {customInputFirst ? renderInputRow() : null}
       {options.slice(optionWindow.start, optionWindow.end).map((option, index) => {
         const absoluteIndex = optionWindow.start + index
         const focused = absoluteIndex === focusIndex
@@ -795,7 +801,7 @@ export function AskUserQuestionPanel({
           </Box>
         )
       })}
-      {hideCustomInput ? null : renderInputRow()}
+      {hideCustomInput || customInputFirst ? null : renderInputRow()}
       {multiSelect && fullscreen && (checked.size > 0 || textRef.current !== '') && (
         <Box
           flexDirection="row"

@@ -74,7 +74,7 @@ async function exercise(fullscreen: boolean, columns: number, rows: number) {
   const question = {
     id: 'models', question: '选择模型', multiSelect: true,
     options: [{ label: 'model-a' }, { label: 'model-b' }],
-    defaultSelected: ['model-a'], modelEditor: staged.editor,
+    defaultSelected: ['model-a'], modelEditor: staged.editor, customInputFirst: true,
   }
   let answered = false
   let cancelled = false
@@ -108,6 +108,12 @@ async function exercise(fullscreen: boolean, columns: number, rows: number) {
   }
   try {
     await waitFor(() => screen().includes('model-a'), 'model list appears')
+    const listLines = screen().split('\n')
+    const questionAt = listLines.findIndex(line => line.includes('选择模型'))
+    const inputRow = listLines.findIndex((line, i) => i > questionAt && line.includes('自定义回答'))
+    const firstOption = listLines.findIndex((line, i) => i > questionAt && line.includes('model-a'))
+    assert.ok(questionAt >= 0 && inputRow > questionAt && firstOption > questionAt && inputRow < firstOption,
+      `manual input row leads the model list\n${screen()}`)
     stdin.write('\t')
     await waitFor(() => screen().includes('编辑模型能力') && screen().includes('4000'), 'Tab opens focused model capabilities')
     assert.equal(answered, false)
