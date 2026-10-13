@@ -212,6 +212,7 @@ Long drafts stop squeezing into the 5-row window. `Ctrl+Shift+E` (remappable) or
 editor that shares the exact editing state (caret/selection/fold/vim mode) with the inline
 prompt.
 
+- Available on the launchpad in both inline and fullscreen mode, with the same editor and buttons. Collapsing preserves text, caret and attachments; the one-row launchpad displays newlines as `↵` without changing the draft. Sending retains the launchpad's command routing and startup checks.
 - Turn it off in `/settings` → `dsh-tui` (`expandEditor`, on by default); both entry points (the `⛶` affordance and the shortcut) then disappear.
 - **Chrome**:
   - A round border following the session accent / plan color.

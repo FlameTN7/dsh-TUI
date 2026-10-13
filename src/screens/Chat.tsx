@@ -771,7 +771,10 @@ export function Chat({
   const [launchpadDraft, setLaunchpadDraft] = React.useState('')
   const [launchpadCaret, setLaunchpadCaret] = React.useState(0)
   const [launchpadFocus, setLaunchpadFocus] = React.useState(-1)
+  const [launchpadEditor, setLaunchpadEditor] = React.useState<PromptDraftCache | null>(null)
+  const launchpadEditorControllerRef = React.useRef<PromptController | null>(null)
   const launchpadImagesRef = React.useRef(new Map<string, string>())
+  const launchpadDraftRef = React.useRef('')
   const changeLaunchpadDraft = (text: string, cursor: number): void => {
     const live = new Set(composerImageRefsForText(text, launchpadImagesRef.current).map(image => image.token))
     for (const [token, stageId] of launchpadImagesRef.current) {
@@ -779,14 +782,39 @@ export function Chat({
       launchpadImagesRef.current.delete(token)
       channel.discardStagedImage(stageId)
     }
+    launchpadDraftRef.current = text
     setLaunchpadDraft(text)
     setLaunchpadCaret(cursor)
+  }
+  const mirrorLaunchpadEditor = (text: string, cursor: number, images: readonly ComposerImageRef[]): void => {
+    // PromptInput owns edits and undo while expanded; only mirror its live
+    // bindings here. It releases removed images once undo no longer holds them.
+    launchpadImagesRef.current.clear()
+    for (const image of images) launchpadImagesRef.current.set(image.token, image.stageId)
+    launchpadDraftRef.current = text
+    setLaunchpadDraft(text)
+    setLaunchpadCaret(cursor)
+  }
+  const openLaunchpadEditor = (text: string, cursor: number): void => {
+    setLaunchpadEditor({ current: {
+      ownerAgentId: String(channel.agentId),
+      bindingGeneration: resolveBindingGeneration(channel),
+      value: text,
+      cursor,
+      foldBlock: null,
+      expanded: true,
+      vimEnabled: false,
+      vimInsert: true,
+      images: [...launchpadImagesRef.current],
+    } })
   }
   const launchpadBindingGeneration = resolveBindingGeneration(channel)
   // Capture the image epoch with each session binding. Automatic startup keeps
   // it; explicit replacement revokes it before publishing the new binding.
   const composerImageGeneration = channel.stagedImageGeneration?.() ?? 0
-  const launchpadSessionRef = React.useRef({ id: channel.agentId, imageGeneration: composerImageGeneration })
+  const launchpadSessionRef = React.useRef({
+    id: channel.agentId, generation: launchpadBindingGeneration, imageGeneration: composerImageGeneration,
+  })
   const discardLaunchpadImages = (): void => {
     for (const stageId of launchpadImagesRef.current.values()) channel.discardStagedImage(stageId)
     launchpadImagesRef.current.clear()
@@ -794,10 +822,26 @@ export function Chat({
   // Lifetime cleanup is separate from binding changes: startup adoption keeps
   // the same draft, including the capabilities behind its image tokens.
   React.useEffect(() => discardLaunchpadImages, [channel])
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const previous = launchpadSessionRef.current
-    launchpadSessionRef.current = { id: channel.agentId, imageGeneration: composerImageGeneration }
-    if (previous.id === '' && channel.agentId !== '' && previous.imageGeneration === composerImageGeneration) return
+    launchpadSessionRef.current = {
+      id: channel.agentId, generation: launchpadBindingGeneration, imageGeneration: composerImageGeneration,
+    }
+    if (previous.id === '' && channel.agentId !== '' && previous.imageGeneration === composerImageGeneration) {
+      // A question/scene can park the editor while startup binds the first
+      // session. Transfer its cached identity before the child's restore effect.
+      const snapshot = launchpadEditor?.current
+      if (launchpadEditor !== null && snapshot?.ownerAgentId === '' && snapshot.bindingGeneration === previous.generation) {
+        launchpadEditor.current = {
+          ...snapshot,
+          ownerAgentId: String(channel.agentId),
+          bindingGeneration: launchpadBindingGeneration,
+        }
+      }
+      return
+    }
+    setLaunchpadEditor(null)
+    launchpadDraftRef.current = ''
     setLaunchpadDraft('')
     setLaunchpadCaret(0)
     discardLaunchpadImages()
@@ -2590,11 +2634,11 @@ export function Chat({
    * History is appended for the two non-empty cases (matching what PromptInput
    * does on submit) so the launchpad's first line is reachable with ↑ later.
    */
-  const submitLaunchpad = (submit: string): string | void => {
+  const submitLaunchpad = (submit: string): string | boolean => {
     const text = submit.trim()
     const parsed = text.startsWith('/') ? parseCommandName(text) : undefined
     // Refused BEFORE the page closes, so the draft stays on it.
-    if (text !== '' && refusedAtStartup(parsed?.name)) return
+    if (text !== '' && refusedAtStartup(parsed?.name)) return false
     const images = composerImageRefsForText(text, launchpadImagesRef.current)
     const command = parsed === undefined ? undefined : channel.commandList.find(entry => entry.name === parsed.name)
     const knownCommand = parsed !== undefined && (
@@ -2615,11 +2659,12 @@ export function Chat({
     // 与本函数 doc 承诺的落点直接矛盾。
     setSupervisorOpen(false)
     setLaunchpadFocus(-1)
+    launchpadDraftRef.current = ''
     setLaunchpadDraft('')
     setLaunchpadCaret(0)
     if (text === '') {
       setLaunchpadOpen(false)
-      return
+      return true
     }
     void appendHistory(text)
     // 第八版：/help 在落地页上也是盖屏浮层（补全面板被 Esc 收掉后直接
@@ -2627,7 +2672,7 @@ export function Chat({
     // 不变（那边不走这个回调）。
     if (parsed !== undefined && parsed.name === 'help' && launchpadOpen) {
       dispatchOverlay({ type: 'open', overlay: { kind: 'help' } })
-      return
+      return true
     }
     // 与 composer 的 tryRunCommand 同一条判定：合并命令表（LOCAL_COMMANDS +
     // channel.commandList 的插件/registry 命令）里有名字才是命令；hidden
@@ -2639,13 +2684,14 @@ export function Chat({
         setLaunchpadOpen(false)
       }
       void runCommand(parsed.name, parsed.rawInput, images)
-      return
+      return true
     }
     // 直接发送：与 composer 回车同一条提交路径。发出去之后输入框是空的
     // （内容已作为首轮发出，绝不"既发了又留在框里"），也没有交接提示——
     // 没有草稿要交，一句"已放进输入框"的 toast 反而是假的。
     setLaunchpadOpen(false)
     channel.submit(text, images)
+    return true
   }
 
   /**
@@ -2656,7 +2702,8 @@ export function Chat({
   const startupFailure = channel.startupFailure
   React.useEffect(() => {
     if (!launchpadOpen || startupFailure === undefined) return
-    launchpadDraftHandoffRef.current = launchpadDraft
+    launchpadDraftHandoffRef.current = launchpadDraftRef.current
+    setLaunchpadEditor(null)
     setLaunchpadOpen(false)
     setSupervisorOpen(false)
     setLaunchpadFocus(-1)
@@ -4419,7 +4466,20 @@ export function Chat({
     // picker back onto the launchpad). The launchpad's own useInput is paused
     // via inputPaused for exactly this window, so keys the picker does not
     // consume cannot leak into the draft.
-    if (launchpadShown && !launchpadOverlayUp) return
+    if (launchpadShown && !launchpadOverlayUp) {
+      if (launchpadEditorControllerRef.current !== null && key.ctrl && (input === 'c' || input === 'd')) {
+        const controller = launchpadEditorControllerRef.current
+        if (input === 'c' && controller?.consumeSelectionCopy()) {
+          // Copy keeps the editor and selection, just like the chat composer.
+        } else if (controller?.hasText()) {
+          controller.clear()
+          mirrorLaunchpadEditor('', 0, [])
+          setLaunchpadEditor(null)
+        } else requestExit()
+        event.stopImmediatePropagation()
+      }
+      return
+    }
     // The session tree owns the whole terminal while it is up: plain letters
     // drive its search, clicks and Enter drive its action menu.
     if (treeOpen) return
@@ -6293,7 +6353,8 @@ export function Chat({
         // 参数行四段点开的既有选择器（第五版）：pickerPanels 与聊天页共用
         // 同一份 JSX，盖在落地页之上；选择器开着时落地页键盘让位（inputPaused）。
         overlayPanel={launchpadOverlayUp ? pickerPanels : undefined}
-        inputPaused={launchpadOverlayUp}
+        inputPaused={launchpadOverlayUp || launchpadEditor !== null}
+        onExpandEditor={channel.expandEditor === false ? undefined : openLaunchpadEditor}
         onParamPick={(segment) => {
           // 四段 → 既有命令：model→/model、effort→/effort、preset→/preset、
           // permission→/permission。全部在 overlayCommandNames 白名单里，
@@ -6398,7 +6459,32 @@ export function Chat({
     const node = (
       <>
         {launchpad}
-        <TooltipLayer invalidationKey={overlay.kind} />
+        <TooltipLayer invalidationKey={launchpadEditor === null ? overlay.kind : 'prompt-editor'} />
+        {launchpadEditor !== null && (
+          <PromptInput
+            channel={channel}
+            draftCache={launchpadEditor}
+            controllerRef={launchpadEditorControllerRef}
+            editorHost={{
+              onChange: mirrorLaunchpadEditor,
+              onClose: () => setLaunchpadEditor(null),
+              onSubmit: (text, images) => {
+                mirrorLaunchpadEditor(text, text.length, images)
+                const outcome = submitLaunchpad(text)
+                if (typeof outcome === 'string') {
+                  channel.notify(outcome, { color: 'warning', timeoutMs: 4000 })
+                  return false
+                }
+                return outcome
+              },
+            }}
+            helpOpen={false}
+            onToggleHelp={() => {}}
+            onRunCommand={runCommand}
+            selectionActive={false}
+          />
+        )}
+        <PromptEditorLayer />
       </>
     )
     return fullscreen ? node : <AlternateScreen>{node}</AlternateScreen>

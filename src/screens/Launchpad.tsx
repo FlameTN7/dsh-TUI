@@ -32,6 +32,7 @@ import {
   stripBracketedPasteMarkers,
 } from '../utils/inputPaste.js'
 import type { ClickEvent } from '../ink/events/click-event.js'
+import { PromptExpandButton } from '../components/PromptEditor.js'
 
 /** 动作入口的类型与状态驱动纯函数在 `launchpadActions.ts`（第四版拆出，表驱动回归在那边）。 */
 export type { LaunchpadAction } from '../components/launchpadActions.js'
@@ -418,6 +419,7 @@ export function Launchpad({
   actions,
   overlayPanel,
   inputPaused = false,
+  onExpandEditor,
   onParamPick,
   model,
   effort,
@@ -484,6 +486,8 @@ export function Launchpad({
    * 由 Chat 的 overlay 分支处理；未消费的键不许漏进草稿）。
    */
   inputPaused?: boolean
+  /** Present only while the shared fullscreen draft editor is enabled. */
+  onExpandEditor?: (text: string, cursor: number) => void
   /**
    * 参数行四段被点击/回车时交给 Chat 的段身份（第五版）。Chat 把它映射到
    * 既有命令（model→/model、effort→/effort、preset→/preset、permission→
@@ -516,7 +520,7 @@ export function Launchpad({
    * （如 /setup）。普通命令经 runCommand 执行，模型路由技能作为消息
    * 提交；拒绝时返回提示并保留草稿。
    */
-  onCommandPick?: ((commandLine: string) => string | void) | undefined
+  onCommandPick?: ((commandLine: string) => string | boolean | void) | undefined
   /**
    * 剪贴板读取缝（测试打桩用；生产走 `utils/clipboard` 的 `readClipboard`，
    * Chat 不传这一项）。签名与 `readClipboard` 一致。
@@ -551,7 +555,7 @@ export function Launchpad({
   /** 输入框内容变化（含光标位置）。 */
   onQueryChange: (text: string, cursor: number) => void
   /** 提交：交给 Chat 分派；拒绝时返回提示并保留草稿。 */
-  onSubmit: (text: string) => string | void
+  onSubmit: (text: string) => string | boolean | void
   /** 空输入时按 Esc / `Ctrl+C`：`sessions` 去看会话，`exit` 走双击退出漏斗。 */
   onEscape: (intent: 'sessions' | 'exit') => void
   /** 点空白处：把焦点收回输入框（不是提交、不是关闭）。 */
@@ -587,7 +591,7 @@ export function Launchpad({
     setPaletteIndex(0)
     const notice = onCommandPick?.(commandLine)
     if (typeof notice === 'string') showPasteNotice(notice)
-    else pasteRevisionRef.current += 1
+    else if (notice !== false) pasteRevisionRef.current += 1
   }
 
   // ── Tips 轮换（第六版设计 2）─────────────────────────────────────────────
@@ -842,10 +846,24 @@ export function Launchpad({
    * `↑/↓` 与 `Tab` 在键帽行上移动焦点；焦点在 `-1` 时这两组键无操作
    * （首屏没有可滚的东西）。
    */
+  const expandEditor = (): void => {
+    if (inputPaused || onExpandEditor === undefined) return
+    // The editor takes over the draft: a late launchpad paste must not write
+    // into it after the handoff. Its lease will release any staged attachment.
+    pasteRevisionRef.current += 1
+    onFocusChange(-1)
+    onExpandEditor(queryRef.current, caretRef.current)
+  }
+
   useInput((input, key, event) => {
     // 选择器盖在这一屏之上时键盘整块让位（Chat 的 overlay 分支处理；Esc 关
     // 选择器回到这里）。没有这道闸，选择器分支没消费的键会漏进草稿。
     if (inputPaused) return
+    if (onExpandEditor !== undefined && actionMatches('expandEditor', input, key)) {
+      expandEditor()
+      event.stopImmediatePropagation()
+      return
+    }
     const query = queryRef.current
     const caret = caretRef.current
     const composing = key.ctrl || key.meta || key.super
@@ -997,7 +1015,7 @@ export function Launchpad({
         if (focused === undefined) {
           const notice = onSubmit(query)
           if (typeof notice === 'string') showPasteNotice(notice)
-          else pasteRevisionRef.current += 1
+          else if (notice !== false) pasteRevisionRef.current += 1
         } else onAction(focused)
       }
       event.stopImmediatePropagation()
@@ -1106,30 +1124,38 @@ export function Launchpad({
               边框在焦点回到输入框时提亮——终端里没有指针形状，颜色变化是
               唯一的「这里在等你打字」反馈。光标按闪烁相位切换样式。 */}
           <Box
-            flexDirection="column"
+            flexDirection="row"
             borderStyle="round"
             borderColor={inputFocused ? 'suggestion' : 'inactive'}
             paddingX={1}
             width={cardWidth}
           >
             <SearchBox
-              query={query}
+              // Keep the launchpad one row without changing the actual draft
+              // or its UTF-16 offsets when the expanded editor adds newlines.
+              query={query.replace(/\n/g, '↵')}
               placeholder={t('launchpad-placeholder')}
               // 第七版（用户原话「光标永远不消失 哪怕焦点没了也不消失」）：
               // 只要这一屏在，输入光标**常在**——焦点挪到参数段/入口行只影响
               // 外框提亮（inputFocused），不再当光标的开关。
               isFocused
+              declareCursor={!inputPaused}
               isTerminalFocused={inputFocused ? true : isTerminalFocused}
               // 占位紧跟 ❯ 之后左对齐（用户实测要求；只影响落地页这一处）。
               placeholderAlign="left"
               // 边框由外层卡片画——SearchBox 自己那圈收起来，否则就是框套框。
               borderless
               prefix={query.startsWith('/') ? '⌘' : '❯'}
-              width={cardWidth - 4}
+              width={cardWidth - 4 - (onExpandEditor === undefined ? 0 : 2)}
               cursorOffset={caret}
               imageSpans={imageSpans}
               caretBlink={inputFocused ? caretPhase : true}
             />
+            {onExpandEditor !== undefined && (
+              <Box marginLeft={1} flexShrink={0}>
+                <PromptExpandButton onClick={expandEditor} accent="suggestion" />
+              </Box>
+            )}
           </Box>
           {/* 参数行：框外、紧贴框下（无空行），左对齐输入框（框缘 + padding 2 格）。
               第五版：四段各自可点（ParamChip——挂 onClick 才有 hover 提亮），

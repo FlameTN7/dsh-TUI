@@ -88,6 +88,27 @@ export function PromptEditorLayer(): React.ReactNode {
   )
 }
 
+/** Shared entry at the end of the chat and launchpad input rows. */
+export function PromptExpandButton({ onClick, accent }: {
+  onClick: () => void
+  accent: keyof Theme | Color
+}): React.ReactNode {
+  const [hovered, setHovered] = React.useState(false)
+  return (
+    <Box
+      flexShrink={0}
+      onClick={(event) => {
+        event.stopImmediatePropagation()
+        onClick()
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <Text dimColor={!hovered} bold={hovered} color={hovered ? accent : undefined}>⛶</Text>
+    </Box>
+  )
+}
+
 /**
  * A mouse-friendly pill button for the editor chrome (send / collapse /
  * the ⤢ close affordance). Hover swaps the surface so the affordance

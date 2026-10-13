@@ -27,7 +27,7 @@ import { draftWordRangeAt, isDraftWordBoundary } from '../utils/draftWordBoundar
 import { formatClipboardInsert, readClipboard } from '../utils/clipboard.js'
 import { imagePathMediaType, parsePastedImagePath, readBoundedRegularFile, stageClipboardFilePaths } from '../utils/pastedImagePath.js'
 import { editInExternalEditor } from '../utils/externalEditor.js'
-import { setPromptEditorNode, EditorButton } from './PromptEditor.js'
+import { setPromptEditorNode, EditorButton, PromptExpandButton } from './PromptEditor.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
 import type {
   ComposerImageRef,
@@ -502,6 +502,16 @@ export interface PromptInputProps {
    * empty first value.
    */
   draftCache?: PromptDraftCache
+  /**
+   * Host only the expanded editor for another input surface. The host supplies
+   * an expanded draftCache, mirrors live text/caret/images, and owns submission
+   * and collapse. The same editing state and chrome serve both surfaces.
+   */
+  editorHost?: {
+    onChange(text: string, cursor: number, images: readonly ComposerImageRef[]): void
+    onSubmit(text: string, images: readonly ComposerImageRef[]): boolean
+    onClose(): void
+  }
   /** Whether the `?` help menu is open (state lives in the Chat screen). */
   helpOpen: boolean
   onToggleHelp(): void
@@ -620,6 +630,7 @@ export function PromptInput({
   suspended = false,
   cursorParking = true,
   draftCache,
+  editorHost,
   helpOpen,
   onToggleHelp,
   onRunCommand,
@@ -793,8 +804,6 @@ export function PromptInput({
   const expandEnabled = channel.expandEditor !== false
   /** Latest expanded viewport metrics for the useInput wheel branch. */
   const editorViewportRef = React.useRef<{ maxRows: number; total: number } | null>(null)
-  /** Hover state of the ⤢/✎ expand affordance in the input row. */
-  const [expandHovered, setExpandHovered] = React.useState(false)
   /** Hover state of the ⌂ session-list affordance at the head of the row. */
   const [homeHovered, setHomeHovered] = React.useState(false)
   /** Pointer over the input box (drives the hover peek card). */
@@ -1556,6 +1565,20 @@ export function PromptInput({
     syncImageGeneration()
     return composerImageRefsForText(text, draftImagesRef.current)
   }
+  // Keep a hosted input's draft current even if startup or a screen change
+  // unmounts the editor without an explicit collapse. Skip the empty frame
+  // before draft adoption; it must never overwrite the owner's initial text.
+  const lastHostedDraftRef = React.useRef<{
+    text: string; cursor: number; images: readonly ComposerImageRef[]
+  } | null>(null)
+  React.useLayoutEffect(() => {
+    if (adoptDraft.current || editorHost === undefined) return
+    const images = imageRefsFor(value)
+    const previous = lastHostedDraftRef.current
+    if (previous?.text === value && previous.cursor === cursor && sameImageRefs(previous.images, images)) return
+    lastHostedDraftRef.current = { text: value, cursor, images }
+    editorHost.onChange(value, cursor, images)
+  })
 
   /**
    * Warn once when the text carries an `[Image #N]` placeholder that will
@@ -2026,6 +2049,16 @@ export function PromptInput({
     if (now - lastEnterAtRef.current < 80) return
     lastEnterAtRef.current = now
     const value = valueRef.current
+    if (editorHost !== undefined) {
+      if (editorHost.onSubmit(value, imageRefsFor(value))) {
+        // Release undo-only attachments while the delivered draft still holds
+        // its capabilities. Its host owns history and the delivered images.
+        clearDraftUndo()
+        clearVimUndo()
+        clearDeliveredDraft()
+      }
+      return
+    }
     // The docked-queue selector owns Enter while a row is highlighted and
     // the draft is untouched: retract that row into the input for editing.
     if (dockSelectedRef.current !== null && value.trim() === '' && dockCount > 0) {
@@ -2082,6 +2115,10 @@ export function PromptInput({
    *  pushed to its edges, selection clamped to one side) would contradict
    *  that — the chip's own click-to-expand already means "unfold". */
   const toggleExpand = () => {
+    if (expandedRef.current && editorHost !== undefined) {
+      collapseEditor()
+      return
+    }
     const next = !expandedRef.current
     expandedRef.current = next
     setExpanded(next)
@@ -2103,6 +2140,10 @@ export function PromptInput({
     lastClickAtRef.current = 0
     lastClickColRef.current = -1
     lastClickRowRef.current = -1
+    if (editorHost !== undefined) {
+      editorHost.onChange(valueRef.current, cursorRef.current, imageRefsFor(valueRef.current))
+      editorHost.onClose()
+    }
   }
 
   /** Local Esc layers, shared by the prompt listener and Chat's delegation.
@@ -4281,7 +4322,7 @@ export function PromptInput({
   // prompt slot. Stay mounted so an async command can settle without losing
   // its exact text/image draft, while contributing no layout, input, cursor,
   // editor layer, or external injection controller.
-  if (suspended) return null
+  if (suspended || editorHost !== undefined) return null
 
   return (
     <Box flexDirection="column" marginTop={1}>
@@ -4562,27 +4603,7 @@ export function PromptInput({
               inputWidth 已为它预留 2 列（见渲染派生区）；设置关闭时
               整体不渲染（宽度预算同步归还）。 */}
           {expandEnabled && (
-            <Box
-              flexShrink={0}
-              onClick={(event) => {
-                event.stopImmediatePropagation()
-                toggleExpand()
-              }}
-              onMouseEnter={() => {
-                setExpandHovered(true)
-              }}
-              onMouseLeave={() => {
-                setExpandHovered(false)
-              }}
-            >
-              <Text
-                dimColor={!expandHovered}
-                bold={expandHovered}
-                color={expandHovered ? promptAccent : undefined}
-              >
-                ⛶
-              </Text>
-            </Box>
+            <PromptExpandButton onClick={toggleExpand} accent={promptAccent} />
           )}
         </Box>
       </EffortInputBorder>

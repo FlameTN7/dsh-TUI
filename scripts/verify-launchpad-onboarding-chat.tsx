@@ -404,6 +404,152 @@ const heroIdentical = (before: readonly string[], after: readonly string[]): boo
   before.length > 0 && after.length === before.length
   && before.every((l, i) => l === after[i])
 
+// The landing page must host the SAME expanded editor as the chat composer.
+const EXPAND_EDITOR = '\x1b[69;6u'
+const EDITOR_SEND = '\x1b[13;5u'
+const EDITOR_TITLE = '草稿编辑'
+for (const fullscreen of [false, true]) {
+  for (const columns of [120, 48]) {
+    const mode = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}`
+    const chat = await mountChat({ launchpadOnBoot: true, columns }, {}, { fullscreen })
+    try {
+      await settled(() => chat.screen().includes('说点什么'))
+      await chat.type('首句tail')
+      await chat.send('\x1b[D')
+      await chat.send('\x1b[D')
+      await chat.send(EXPAND_EDITOR)
+      if (!await settled(() => chat.screen().includes(EDITOR_TITLE))) {
+        throw new Error(`launchpad ${mode}: expand shortcut did not open the draft editor\n${chat.screen()}`)
+      }
+      check(`Editor[${mode}] 展开复用编辑器标题和发送/收起按钮`,
+        chat.screen().includes('发送') && chat.screen().includes('收起'))
+      await chat.send('\r')
+      await chat.type('继续')
+      check(`Editor[${mode}] Enter 换行，不发送首句`, chat.calls.length === 0)
+      await chat.send('\x1b')
+      check(`Editor[${mode}] Esc 收起，开屏保留多行草稿`,
+        await settled(() => !chat.screen().includes(EDITOR_TITLE) && chat.screen().includes('首句ta↵继续il')), chat.screen())
+      await chat.send(EXPAND_EDITOR)
+      await settled(() => chat.screen().includes(EDITOR_TITLE))
+      await chat.type('X')
+      await chat.send(EDITOR_SEND)
+      check(`Editor[${mode}] 重开保留光标，Ctrl+Enter 仅发送一次原始多行文本`,
+        await settled(() => chat.calls.length === 1 && !chat.screen().includes(EDITOR_TITLE))
+          && chat.calls[0] === 'submit:首句ta\n继续Xil', JSON.stringify(chat.calls))
+    } finally { await chat.unmount() }
+  }
+}
+{
+  const chat = await mountChat({ launchpadOnBoot: true }, {}, { fullscreen: true })
+  try {
+    await chat.click('⛶')
+    check('Editor 点击开屏入口打开全屏编辑器', await settled(() => chat.screen().includes(EDITOR_TITLE)))
+    await chat.type('按钮草稿')
+    await chat.click('收起 Esc')
+    check('Editor 点击收起保留草稿', await settled(() => chat.screen().includes('按钮草稿') && !chat.screen().includes(EDITOR_TITLE)))
+    await chat.click('⛶')
+    await chat.click('发送 Ctrl+Enter')
+    check('Editor 点击发送只提交一次', await settled(() => chat.calls.length === 1) && chat.calls[0] === 'submit:按钮草稿')
+  } finally { await chat.unmount() }
+}
+{
+  const chat = await mountChat({ launchpadOnBoot: true }, { expandEditor: false }, { fullscreen: true })
+  try {
+    await settled(() => chat.screen().includes('说点什么'))
+    await chat.send(EXPAND_EDITOR)
+    check('Editor 设置关闭时开屏不显示入口，快捷键不生效',
+      !chat.screen().includes('⛶') && !chat.screen().includes(EDITOR_TITLE))
+  } finally { await chat.unmount() }
+}
+{
+  const chat = await mountChat({ launchpadOnBoot: true }, { ready: false }, { fullscreen: true })
+  try {
+    await chat.type('保留启动草稿')
+    await chat.send(EXPAND_EDITOR)
+    await settled(() => chat.screen().includes(EDITOR_TITLE))
+    await chat.send(EDITOR_SEND)
+    check('Editor 内核启动期间拒绝发送且保留草稿',
+      await settled(() => !chat.screen().includes(EDITOR_TITLE)) && chat.calls.length === 0
+        && chat.screen().includes('保留启动草稿'), chat.screen())
+  } finally { await chat.unmount() }
+}
+{
+  const chat = await mountChat({ launchpadOnBoot: true }, {}, { fullscreen: true })
+  try {
+    await chat.send(EXPAND_EDITOR)
+    await settled(() => chat.screen().includes(EDITOR_TITLE))
+    await chat.type('/help')
+    await chat.send(EDITOR_SEND)
+    check('Editor 命令发送沿用开屏的盖屏路由', await settled(() => chat.screen().includes(HELP_MARK)) && chat.calls.length === 0)
+    await chat.send('\x1b')
+    check('Editor 关闭帮助回开屏，已发送命令不残留', await settled(() => chat.screen().includes(LAUNCHPAD_MARK)))
+  } finally { await chat.unmount() }
+}
+
+for (const key of ['\x03', '\x04']) {
+  const chat = await mountChat({ launchpadOnBoot: true }, {}, { fullscreen: true })
+  try {
+    await chat.type('清空草稿')
+    await chat.send(EXPAND_EDITOR)
+    await settled(() => chat.screen().includes(EDITOR_TITLE))
+    await chat.send(key)
+    check(`Editor ${key === '\x03' ? 'Ctrl+C' : 'Ctrl+D'} 沿用开屏清空行为并交还输入`,
+      await settled(() => !chat.screen().includes(EDITOR_TITLE) && chat.screen().includes(LAUNCHPAD_MARK)))
+    await chat.type('继续编辑')
+    check('Editor 清空后开屏可继续输入', await settled(() => chat.screen().includes('继续编辑')))
+  } finally { await chat.unmount() }
+}
+
+for (const sameBatch of [false, true]) {
+  const questions = new QuestionStore()
+  const chat = await mountChat({ launchpadOnBoot: true }, {
+    ready: false, agentId: '', agentBindingGeneration: 0, stagedImageGeneration: () => 0,
+  }, { fullscreen: true, questionStore: questions })
+  try {
+    await chat.type('启动草稿')
+    await chat.send(EXPAND_EDITOR)
+    await settled(() => chat.screen().includes(EDITOR_TITLE))
+    const answer = questions.ask({ questions: [{
+      id: 'startup', question: 'EDITOR STARTUP COVER', options: [{ label: '继续' }], hideCustomInput: true,
+    }] }).catch(() => undefined)
+    await settled(() => chat.screen().includes('EDITOR STARTUP COVER'))
+    chat.channel.agentId = 'ready-session'
+    chat.channel.agentBindingGeneration = 1
+    chat.channel.ready = true
+    const before = chat.stdout.frames.length
+    const notify = chat.channel.notify as (text: string) => void
+    notify('ready')
+    if (!sameBatch) await settled(() => chat.stdout.frames.length > before)
+    questions.cancelCurrent()
+    await answer
+    check(`Editor 启动绑定${sameBatch ? '与问卷关闭同批' : '在问卷覆盖期间'}不丢草稿和展开态`,
+      await settled(() => chat.screen().includes(EDITOR_TITLE) && chat.screen().includes('启动草稿')), chat.screen())
+    await chat.type('X')
+    await chat.send(EDITOR_SEND)
+    check('Editor 启动绑定后保留的草稿可发送',
+      await settled(() => chat.calls.includes('submit:启动草稿X')), JSON.stringify(chat.calls))
+  } finally { await chat.unmount() }
+}
+{
+  const questions = new QuestionStore()
+  const chat = await mountChat({ launchpadOnBoot: true }, {}, { fullscreen: true, questionStore: questions })
+  try {
+    await chat.type('问卷前草稿')
+    await chat.send(EXPAND_EDITOR)
+    await settled(() => chat.screen().includes(EDITOR_TITLE))
+    const answer = questions.ask({ questions: [{
+      id: 'cover', question: 'EDITOR CANCEL COVER', options: [{ label: '继续' }], hideCustomInput: true,
+    }] }).catch(() => undefined)
+    await settled(() => chat.screen().includes('EDITOR CANCEL COVER'))
+    await chat.send('\x03')
+    check('Editor 被问卷盖住时 Ctrl+C 归问卷，返回仍保留草稿',
+      await settled(() => !chat.screen().includes('EDITOR CANCEL COVER')
+        && chat.screen().includes(EDITOR_TITLE) && chat.screen().includes('问卷前草稿')), chat.screen())
+    questions.cancelCurrent()
+    await answer
+  } finally { await chat.unmount() }
+}
+
 // ── A. /setup 打开向导 ─────────────────────────────────────────────────────
 {
   const chat = await mountChat({ launchpadOnBoot: true })
@@ -1555,6 +1701,55 @@ const AC4_CUT_PRESET = 'Standard (Git Bash'
       submit(text: string, images: readonly ComposerImageRef[] = []) { submissions.push({ text, images }) },
     }
     return { patch, staged, discarded, inputs, submissions }
+  }
+  for (const pasteInEditor of [false, true]) {
+    const fixture = imageHarness()
+    const chat = await mountChat({ launchpadOnBoot: true }, fixture.patch, { fullscreen: true })
+    try {
+      if (pasteInEditor) {
+        await chat.send(EXPAND_EDITOR)
+        await settled(() => chat.screen().includes(EDITOR_TITLE))
+      }
+      await chat.send(pastePath)
+      await settled(() => chat.screen().includes('[Image #1]'))
+      if (!pasteInEditor) {
+        await chat.send(EXPAND_EDITOR)
+        await settled(() => chat.screen().includes(EDITOR_TITLE))
+      }
+      await chat.type('说明')
+      await chat.send('\x1b')
+      check(`Editor 图片在${pasteInEditor ? '编辑器' : '开屏'}粘贴后，收起仍保留绑定`,
+        await settled(() => chat.screen().includes('[Image #1] 说明') && !chat.screen().includes(EDITOR_TITLE))
+          && fixture.staged.size === 1 && fixture.discarded.length === 0, chat.screen())
+      await chat.send(EXPAND_EDITOR)
+      await settled(() => chat.screen().includes(EDITOR_TITLE))
+      await chat.type('X') // Creates an undo entry holding the same attachment.
+      await chat.send(EDITOR_SEND)
+      check('Editor 重开和发送不释放已交付图片，且只发送一次',
+        await settled(() => fixture.submissions.length === 1)
+          && fixture.submissions[0]!.text === '[Image #1] 说明X'
+          && fixture.submissions[0]!.images[0]?.stageId === 'launchpad-stage-1'
+          && fixture.staged.size === 1 && fixture.discarded.length === 0,
+        JSON.stringify(fixture.submissions))
+    } finally { await chat.unmount() }
+  }
+  {
+    const fixture = imageHarness()
+    const chat = await mountChat({ launchpadOnBoot: true }, fixture.patch, { fullscreen: true })
+    try {
+      await chat.send(EXPAND_EDITOR)
+      await settled(() => chat.screen().includes(EDITOR_TITLE))
+      await chat.type('/help ')
+      await chat.send(pastePath)
+      await settled(() => chat.screen().includes('[Image #1]'))
+      await chat.send(EDITOR_SEND)
+      check('Editor 命令拒绝附件时收起保留文字、图片和原开屏',
+        await settled(() => chat.screen().includes('/help 不接受图片；草稿已保留'))
+          && chat.screen().includes('/help [Image #1]') && !chat.screen().includes(HELP_MARK)
+          && fixture.staged.size === 1 && fixture.discarded.length === 0 && fixture.submissions.length === 0,
+        chat.screen())
+    } finally { await chat.unmount() }
+    check('Editor Chat 卸载释放未发送的编辑器图片', fixture.staged.size === 0)
   }
   for (const fullscreen of [false, true]) {
     for (const columns of [120, 48]) {
