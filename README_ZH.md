@@ -83,6 +83,33 @@
 
 ## 快速开始
 
+### Windows 一键安装（x64）
+
+从 [Releases](https://github.com/ccch1mneyyy/dsh-TUI/releases) 下载 `dsh-tui-setup-win-x64.exe`，双击安装。适用于带系统 `tar.exe` 的 Windows 10/11 x64，无需管理员权限；依赖已内置，安装过程无需联网。兼容的 Node 会被复用，否则安装官方便携 Node。完成后可从桌面快捷方式启动，或在新终端运行 `dsh-tui` / `dst`。首次使用按引导配置账号。
+
+程序使用标准 `%APPDATA%\npm` 全局包目录，预置 `%USERPROFILE%\.dsh\profiles\dsh-tui`。兼容的 DSH 内核会保留，过旧内核会升级；超前内核或较新 TUI 的降级需要两次确认，默认取消。安装失败会回滚。若另一个 npm 目录中的 `dsh` 优先于此目录，请先调整 PATH 顺序再安装。
+
+在 Windows「已安装的应用」中卸载，或运行 `%LOCALAPPDATA%\Programs\dsh-tui\unins000.exe`。默认仅移除全局 TUI；可选择同时移除 DSH。两种方式都保留 `.dsh` / `.dsh-tui` 中的凭据、会话、偏好、profile 和第三方插件；共享的 Node、pnpm 与其他 npm 命令仍保留。PATH 只移除本安装器添加且不再被共享命令使用的项。故障排查可运行 `dsh-tui doctor` 或 `dsh-tui safe --rescue`。
+
+<details>
+<summary>构建和验证 Windows 安装包</summary>
+
+在 Windows x64 上准备 Node 24 和 NSIS 3，执行：
+
+```powershell
+npm ci --prefix scripts/windows --ignore-scripts
+node scripts/windows/build-installer-payload.mjs --out dist-windows
+node scripts/verify-windows-installer.mjs --build dist-windows --makensis 'C:\Program Files (x86)\NSIS\makensis.exe'
+& 'C:\Program Files (x86)\NSIS\makensis.exe' "/DBUILD_DIR=$pwd\dist-windows" scripts/windows/installer.nsi
+node scripts/verify-windows-installer.mjs --exe dist-windows/dsh-tui-setup-win-x64.exe
+```
+
+输出 EXE、`SHA256SUMS`、完整性元数据及 `locks/` 依赖锁。重建可传 `--locks <已有 locks 目录>` 和 `--node-version <原 Node 版本>`，复用相同依赖解析结果。验证器自行编译指定隔离目录的测试版 EXE，检查安装、profile 组合、重复安装、静默拒绝降级与卸载，不安装到真实用户目录。`/S` 可静默安装；遇到降级或运行中的程序会拒绝。发布工作流汇总各平台文件后统一计算 SHA256。
+
+</details>
+
+### 命令行安装
+
 前置条件：安装 [Node.js](https://nodejs.org/zh-cn) 与 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)。`deepseek-official` API key 路由需要 `DEEPSEEK_API_KEY`；DSH 0.2.0-rc.1+ 的标准 profile 也可用 `/auth login deepseek-account` 登录，再通过 `/model` 选择独立的账号路由。其他支持的账号可在启动后通过 `/provider` 或 `/auth` 登录。
 
 主适配目标为 DSH `0.2.0-rc.2`，已接入新版 Shell API、V4 会话消息、声明式预设与

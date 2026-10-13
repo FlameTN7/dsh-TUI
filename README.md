@@ -90,6 +90,33 @@ daily** (TypeScript).
 
 ## Quick Start
 
+### Windows one-click installer (x64)
+
+Download `dsh-tui-setup-win-x64.exe` from [Releases](https://github.com/ccch1mneyyy/dsh-TUI/releases) and run it on Windows 10/11 x64 with the system `tar.exe`. Installation is offline and needs no administrator privileges. It reuses a compatible Node installation or supplies the official portable runtime. Open the desktop shortcut, or run `dsh-tui` / `dst` in a new terminal. Follow the first-run account setup when starting the app.
+
+Packages use the standard `%APPDATA%\npm` layout with a ready-to-use `%USERPROFILE%\.dsh\profiles\dsh-tui` profile. Compatible DSH kernels are preserved; older kernels are upgraded. Replacing a newer kernel or TUI requires two confirmations, both defaulting to cancel. Failed installation rolls back. If another npm prefix supplies the first `dsh` command on PATH, adjust that order before installing.
+
+Uninstall through Windows Installed Apps or `%LOCALAPPDATA%\Programs\dsh-tui\unins000.exe`. The default removes the global TUI only; an optional mode also removes DSH. Both preserve all credentials, sessions, preferences, profiles and third-party plugins under `.dsh` / `.dsh-tui`. Shared Node, pnpm and other npm commands remain. Only an installer-added PATH entry with no remaining shared commands can be removed. Use `dsh-tui doctor` or `dsh-tui safe --rescue` for troubleshooting.
+
+<details>
+<summary>Build and verify the Windows installer</summary>
+
+On Windows x64 with Node 24 and NSIS 3:
+
+```powershell
+npm ci --prefix scripts/windows --ignore-scripts
+node scripts/windows/build-installer-payload.mjs --out dist-windows
+node scripts/verify-windows-installer.mjs --build dist-windows --makensis 'C:\Program Files (x86)\NSIS\makensis.exe'
+& 'C:\Program Files (x86)\NSIS\makensis.exe' "/DBUILD_DIR=$pwd\dist-windows" scripts/windows/installer.nsi
+node scripts/verify-windows-installer.mjs --exe dist-windows/dsh-tui-setup-win-x64.exe
+```
+
+Outputs include the EXE, `SHA256SUMS`, integrity metadata and dependency locks in `locks/`. Pass `--locks <previous locks directory>` and `--node-version <original Node version>` to reuse the same resolved dependencies. The verifier compiles its own isolated test EXE and checks installation, profile composition, reinstallation, silent downgrade refusal and uninstallation without installing into your real user directories. `/S` installs silently but refuses downgrades or running applications. The release workflow combines platform assets before calculating a single SHA256 manifest.
+
+</details>
+
+### Command-line installation
+
 Prerequisites: [Node.js](https://nodejs.org/en) and
 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness).
 The `deepseek-official` API-key route needs `DEEPSEEK_API_KEY`. On DSH
