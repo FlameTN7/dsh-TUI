@@ -656,6 +656,10 @@ dsh 意外退出时，安全模式给出**只读**的环境诊断、profile 插�
 **常用环境变量**：
 
 - `DSH_TUI_LANG`、`DSH_TUI_THEME`、`DSH_TUI_PRESET`、`DSH_TUI_PERSONA`
+- `DSH_TUI_ALLOW_DEV=1` 允许显式设置的 `NODE_ENV=development`，用于短时
+  React 调试。其余启动强制使用生产构建，包括工作区 `.env` 设置了 development
+  的情况；仅设置 opt-in 而未设置 `NODE_ENV` 仍默认生产。开发构建可能在长会话中
+  持续增长内存。`DSH_TUI_DEBUG` 只启用诊断，不改变 React 构建。
 - `DSH_TUI_DISABLE_MOUSE`、`DSH_TUI_DISABLE_TERMINAL_IMAGES`、`DSH_TUI_IMAGE_PROTOCOL`、
   `DSH_TUI_ACCESSIBILITY`（无障碍：关动画/图形预览）
 - `DSH_TUI_RESUME_SESSION`、`DSH_TUI_WORKSPACE_TARGET`、`DSH_TUI_SESSION_ROOT`、`DSH_TUI_DEBUG`、

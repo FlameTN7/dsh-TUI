@@ -715,6 +715,11 @@ When dsh exits unexpectedly, safe mode gives a **read-only** environment diagnos
 **Common environment variables**:
 
 - `DSH_TUI_LANG`, `DSH_TUI_THEME`, `DSH_TUI_PRESET`, `DSH_TUI_PERSONA`
+- `DSH_TUI_ALLOW_DEV=1` permits an explicitly set `NODE_ENV=development` for
+  short React debugging runs. Otherwise startup forces production, including
+  when a workspace `.env` sets development; opting in without `NODE_ENV` still
+  defaults to production. Development builds can grow memory in long sessions.
+  `DSH_TUI_DEBUG` enables diagnostics without changing the React build.
 - `DSH_TUI_DISABLE_MOUSE`, `DSH_TUI_DISABLE_TERMINAL_IMAGES`, `DSH_TUI_IMAGE_PROTOCOL`,
   `DSH_TUI_ACCESSIBILITY` (accessibility: no animation/graphics preview)
 - `DSH_TUI_RESUME_SESSION`, `DSH_TUI_WORKSPACE_TARGET`, `DSH_TUI_SESSION_ROOT`, `DSH_TUI_DEBUG`,

@@ -42,6 +42,7 @@ import { availableParallelism, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const GATES = [
+  'verify:production-react',
   'verify:boundary',
   'verify:agent-domain',
   'verify:contract',

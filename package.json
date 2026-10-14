@@ -134,6 +134,7 @@
     "tui": "node --import tsx/esm scripts/run.ts",
     "smoke": "node --import tsx/esm scripts/smoke.tsx",
     "verify:build": "node scripts/run-verify-build.mjs",
+    "verify:production-react": "node --import tsx/esm scripts/verify-production-react.mjs",
     "verify:boundary": "node --import tsx/esm scripts/verify-adapter-boundary.ts",
     "verify:i18n": "node --import tsx/esm scripts/verify-i18n.ts",
     "verify:contract": "node --import tsx/esm scripts/verify-upstream-contract.ts && node --import tsx/esm scripts/verify-host-contract.ts",

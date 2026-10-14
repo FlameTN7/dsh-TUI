@@ -396,6 +396,13 @@ scripts by default. Install the registry package instead:
 `dsh plugin --profile dsh-tui add @deepseek-harness-tui/dsh-tui`. Rendering,
 questionnaire, or tool-card changes also need the matching regression scripts.
 
+React uses its production build at startup, including when a workspace `.env`
+sets `NODE_ENV=development`. To debug React itself, explicitly set both
+`DSH_TUI_ALLOW_DEV=1` and `NODE_ENV=development` before starting `dsh-tui` or
+`dsh --profile dsh-tui`. Development builds can grow memory during long sessions;
+use this opt-in only for short debugging runs. `DSH_TUI_DEBUG` enables diagnostics
+without changing the React build.
+
 ## Plugin Ecosystem
 
 Plugin development: [admission & development guide](tui-profile/docs/plugin-admission-and-development.md) · [plugin-template](https://github.com/dsh-tui-ecosystem/plugin-template) · [dsh-tui-ecosystem](https://github.com/dsh-tui-ecosystem). Reference implementation: `dsh-working-activity`.
