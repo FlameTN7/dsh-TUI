@@ -426,6 +426,12 @@ dsh-TUI ships no generic skills; `/skills` browses skills DSH discovers, and a d
 
 > These commands come from the DSH command registry; this repo only merges them into the menu, completes, and dispatches.
 
+Single-line confirmations up to 200 terminal cells use notifications. Multiline or longer results, including errors, remain in local transcript blocks and open a bounded reader. Use `↑`/`↓`, `PgUp`/`PgDn`, and `Home`/`End` to read the report, `c` to copy the displayed report, and `Esc` to return to the draft. To reopen it, press `Shift+Up` to select a local output row, then Enter. Approval, question, and plugin dialog panels take priority; a result arriving while another picker is open stays in the transcript without replacing it.
+
+The reader uses a temporary full-screen view in inline mode, where a large atomic report can exceed the native scrollback repaint region. These blocks are UI-only: they do not enter model context, backend history, or `/export` and do not survive a session reload. Draft consumption still follows the command outcome; a failed command keeps its input editable. Bare `/goal` retains its existing status-block presentation.
+
+Each result is bounded to the first 65,536 JavaScript characters and 200 source lines, with up to 4,000 terminal cells per line. An ellipsis marks a clipped line; exceeding the total text or line budget adds an explicit truncation notice. Long lines wrap in the reader; the transcript retains its usual folding rules.
+
 ## 4. Session workflow
 
 ### 4.1 Session lifecycle

@@ -801,6 +801,9 @@ const dict = {
   'esc-again-clear': { zh: '再次按 Esc 清空', en: 'Press Esc again to clear' },
   'new-session-started': { zh: '已新建会话', en: 'New session started' },
   'command-not-found': { zh: '/{{name}}：没有这个命令', en: '/{{name}}: no such command' },
+  'command-output-error': { zh: '/{{name}}（错误）', en: '/{{name}} (error)' },
+  'command-output-truncated': { zh: '… 命令输出超过显示上限，已截断', en: '… Command output exceeded the display limit and was truncated' },
+  'command-output-hint': { zh: '↑↓/翻页 Home/End · c 复制 · Esc 关闭', en: '↑↓ PgUp/PgDn Home/End · c copy · Esc close' },
   'command-images-unsupported': {
     zh: '/{{name}} 不接受图片；草稿已保留',
     en: '/{{name}} does not accept images; the draft was preserved',

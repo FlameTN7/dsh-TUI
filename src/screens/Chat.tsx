@@ -23,6 +23,7 @@ import { homeDir } from '../utils/paths.js'
 import { execFileNoThrow } from '../utils/execFileNoThrow.js'
 import type { LlmModelInfo, LlmProviderInfo } from '../adapter/ports/channel-view.js'
 import { cleanBlockLines, cleanRenderText, cleanScalarText } from '../dsh-adapter/sanitize.js'
+import { stringWidth } from '../ink/stringWidth.js'
 import { readModelRecents, recordModelUse, type ModelRecentsRef } from '../modelRecents.js'
 import { WORKING_GATE_NOTICES } from '../commands.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
@@ -142,6 +143,7 @@ import { BtwThreadScene } from '../components/sidePanel/btw/BtwThreadScene.js'
 import { RecapPanel } from '../components/RecapPanel.js'
 import { isValidSessionColor, SESSION_COLOR_NAMES } from '../terminal-utils/sessionColors.js'
 import { TipsPanel } from '../components/TipsPanel.js'
+import { CommandOutputPanel } from '../components/CommandOutputPanel.js'
 import { SubagentDashboard } from '../components/SubagentDashboard.js'
 import { JobsPanel } from '../components/JobsPanel.js'
 import { SubagentDetailScene } from '../components/SubagentDetailScene.js'
@@ -222,6 +224,9 @@ const COMMAND_RESULT_CELLS = 200
  *  wider than COMMAND_RESULT_CELLS, whose 200-cell single-line rule cannot
  *  carry a full goal objective. Still a bound, not "no limit". */
 const LOCAL_BLOCK_CELLS = 4000
+/** Bound untrusted command reports before splitting or sanitizing them. */
+const COMMAND_BLOCK_CHARS = 64 * 1024
+const COMMAND_BLOCK_LINES = 200
 
 /** Ceiling for one `dsh-tui migrate` child run. Discovery parses every source
  *  file, but a healthy import of thousands of conversations finishes well
@@ -249,17 +254,21 @@ const LAUNCHPAD_OVERLAY_KINDS: ReadonlySet<string> = new Set([
   'sdk-install',
 ])
 
-function cleanCommandError(error: unknown): string {
+function commandErrorText(error: unknown): string {
   try {
     if (error instanceof Error) {
       return typeof error.message === 'string'
-        ? cleanRenderText(error.message, COMMAND_RESULT_CELLS)
+        ? error.message
         : ''
     }
-    return cleanScalarText(error, COMMAND_RESULT_CELLS)
+    return typeof error === 'string' || typeof error === 'number' || typeof error === 'boolean' ? String(error) : ''
   } catch {
     return ''
   }
+}
+
+function cleanCommandError(error: unknown): string {
+  return cleanRenderText(commandErrorText(error), COMMAND_RESULT_CELLS)
 }
 
 function clonePermissionPresetSnapshot(snapshot: PermissionPresetSnapshot): PermissionPresetSnapshot {
@@ -655,6 +664,29 @@ export function Chat({
    * list while the fresh one loads, exactly as the boolean era did.
    */
   const [overlay, dispatchOverlay] = React.useReducer(chatOverlayReducer, NO_OVERLAY)
+  const commandOutputTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  React.useEffect(() => () => { clearTimeout(commandOutputTimer.current) }, [])
+  const commandReport = overlay.kind === 'command-output'
+    && overlay.generation === (channel.agentBindingGeneration ?? 0)
+    ? (() => {
+      const index = channel.rows.findIndex(row => row.id === overlay.rowId && row.kind === 'local')
+      if (index < 0) return undefined
+      const lines: string[] = []
+      for (const row of channel.rows.slice(index + 1, index + COMMAND_BLOCK_LINES + 2)) {
+        if (row.kind !== 'local-output') break
+        lines.push(row.text)
+      }
+      if (channel.rows[index + COMMAND_BLOCK_LINES + 2]?.kind === 'local-output') {
+        lines[COMMAND_BLOCK_LINES] = t('command-output-truncated')
+      }
+      return { title: channel.rows[index]!.text, lines }
+    })()
+    : undefined
+  React.useEffect(() => {
+    if (overlay.kind === 'command-output' && commandReport === undefined) {
+      dispatchOverlay({ type: 'close-if', kind: 'command-output' })
+    }
+  }, [overlay.kind, commandReport === undefined])
   // `/migrate` picker rows (null = collecting in the background; the picker
   // shows its empty state until the sub-second scan lands).
   const [migrateRows, setMigrateRows] = React.useState<MigratePickerRow[] | null>(null)
@@ -2360,15 +2392,15 @@ export function Chat({
    * Dispatch a slash command; false lets the input flow to the model.
    * Built-in names run the local switch; anything registered by a DSH
    * plugin (plan/goal/…) dispatches through the command registry, whose
-   * result text lands as a notification. `rawInput` carries the text after
+   * result text lands as a local report or short notification. `rawInput` carries the text after
    * the command name (`/plan off` → ` off`).
    *
    * `render.block` prints a multi-line report the way `/plugins` prints one:
    * a `local` echo row plus one wrapped `local-output` row per line, in the
    * transcript (native scrollback in inline mode). A single truncated toast
-   * row cannot carry a full goal objective, so the bare `/goal` status query
-   * asks for the block; errors always notify — they want the color and the
-   * transient read.
+   * row cannot carry a report: multiline and long responses (including
+   * errors) use the same block. Bare `/goal` explicitly requests one even
+   * for a short status. These rows are local UI output, never model input.
    */
   const runExternalCommand = (
     name: string,
@@ -2377,27 +2409,56 @@ export function Chat({
     render?: { readonly block?: boolean },
   ): Promise<boolean> => {
     const originAgentBinding = channel.agentBindingGeneration
+    const showOutput = (text: string, error: boolean): void => {
+      const end = text.length > COMMAND_BLOCK_CHARS
+        && /[\uD800-\uDBFF]/u.test(text[COMMAND_BLOCK_CHARS - 1]!)
+        && /[\uDC00-\uDFFF]/u.test(text[COMMAND_BLOCK_CHARS]!)
+        ? COMMAND_BLOCK_CHARS - 1 : COMMAND_BLOCK_CHARS
+      const bounded = text.slice(0, end)
+      const notice = cleanRenderText(bounded, COMMAND_RESULT_CELLS + 1)
+      if (render?.block === true || /[\r\n]/u.test(bounded)
+        || stringWidth(notice) > COMMAND_RESULT_CELLS || text.length > bounded.length) {
+        const rawLines = bounded.split(/\r?\n/u, COMMAND_BLOCK_LINES + 1)
+        const lines = cleanBlockLines(rawLines.slice(0, COMMAND_BLOCK_LINES).join('\n'), LOCAL_BLOCK_CELLS)
+        if (text.length > bounded.length || rawLines.length > COMMAND_BLOCK_LINES) {
+          lines.push(t('command-output-truncated'))
+        }
+        if (lines.length > 0) {
+          const title = error ? t('command-output-error', { name }) : `/${name}`
+          // Sanitization already enforces the cell budget; pushLocal's legacy
+          // JS-length preview must not cut Unicode/combining text again.
+          channel.pushLocal(title, lines, { lineLimit: COMMAND_BLOCK_CHARS })
+          // Bare /goal retains its existing explicit report presentation.
+          // Other reports get a bounded reader in either terminal mode.
+          const header = channel.rows.at(-lines.length - 1)
+          if (render?.block !== true && header?.kind === 'local') {
+            clearTimeout(commandOutputTimer.current)
+            // Let PromptInput settle consumeDraft before a full-screen reader
+            // unmounts it and hands the draft to the existing owner cache.
+            commandOutputTimer.current = setTimeout(() => {
+              commandOutputTimer.current = undefined
+              if (channel.agentBindingGeneration !== originAgentBinding) return
+              dispatchOverlay({ type: 'open-if', when: ['none', 'command-output'], overlay: {
+                kind: 'command-output', rowId: header.id, generation: originAgentBinding ?? 0,
+              } })
+            }, 0)
+          }
+        }
+      } else if (notice !== '') {
+        channel.notify(notice, error ? { color: 'error' } : undefined)
+      }
+    }
     return channel.runExternalCommandOutcome(name, rawInput, images).then((outcome) => {
       if (channel.agentBindingGeneration !== originAgentBinding) return false
       if (outcome === undefined) {
         channel.notify(t('command-not-found', { name }), { color: 'error' })
         return false
       }
-      if (render?.block === true && outcome.kind !== 'error') {
-        // Per-line sanitize: the newlines here are the report's structure.
-        const lines = cleanBlockLines(outcome.text, LOCAL_BLOCK_CELLS)
-        if (lines.length > 0) channel.pushLocal(`/${name}`, lines, { lineLimit: LOCAL_BLOCK_CELLS })
-      } else {
-        const cleaned = cleanRenderText(outcome.text, COMMAND_RESULT_CELLS)
-        if (cleaned !== '') {
-          channel.notify(cleaned, outcome.kind === 'error' ? { color: 'error' } : undefined)
-        }
-      }
+      showOutput(outcome.text, outcome.kind === 'error')
       return outcome.consumeDraft
     }).catch((error: unknown) => {
       if (channel.agentBindingGeneration !== originAgentBinding) return false
-      const detail = cleanCommandError(error)
-      if (detail !== '') channel.notify(detail, { color: 'error' })
+      showOutput(commandErrorText(error), true)
       return false
     })
   }
@@ -4361,7 +4422,8 @@ export function Chat({
 
   const enterSelection = () => {
     setSelectionActive(true)
-    const last = selectableRows[selectableRows.length - 1]
+    // The mode-gated list is empty until selection is active.
+    const last = channel.rows.findLast(row => SELECTABLE_KINDS.has(row.kind))
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: empty selectable list
     setSelectedId(last ? last.id : null)
   }
@@ -4376,13 +4438,26 @@ export function Chat({
   // useCallback: these feed MessageList → MemoRow's shallow compare; fresh
   // closures each render would defeat every row's memo.
   const toggleRowExpanded = React.useCallback((rowId: number) => {
+    let index = channel.rows.findIndex(row => row.id === rowId)
+    if (index >= 0 && (channel.rows[index]!.kind === 'local' || channel.rows[index]!.kind === 'local-output')) {
+      while (index > 0 && channel.rows[index]!.kind === 'local-output') index--
+      const header = channel.rows[index]
+      if (header?.kind === 'local' && channel.rows[index + 1]?.kind === 'local-output') {
+        setSelectionActive(false)
+        setSelectedId(null)
+        dispatchOverlay({ type: 'open', overlay: {
+          kind: 'command-output', rowId: header.id, generation: channel.agentBindingGeneration ?? 0,
+        } })
+        return
+      }
+    }
     setExpandedRows((previous) => {
       const next = new Set(previous)
       if (next.has(rowId)) next.delete(rowId)
       else next.add(rowId)
       return next
     })
-  }, [])
+  }, [channel])
   const toggleStreamView = React.useCallback((rowId: number) => {
     setStreamViewToggledRows((previous) => {
       const next = new Set(previous)
@@ -4423,6 +4498,7 @@ export function Chat({
     if (
       btwOverlayOpen
       || overlay.kind === 'tips'
+      || overlay.kind === 'command-output'
       || (recap !== null && (!recap.auto || recap.expanded))
     ) return
     // The first-run guide owns the whole terminal while it is up: it is a
@@ -6214,10 +6290,10 @@ export function Chat({
   const promptSelectionActive =
     selectionActive || overlay.kind !== 'none' || btwOverlayOpen
 
-  // These panels replace the visible composer, but PromptInput remains
-  // mounted (suspended) so an async registry command cannot lose its exact
-  // text/image draft while it waits for a user decision.
-  const promptReplacementOpen =
+  // Prompt-slot panels keep PromptInput mounted but suspended. Whole-screen
+  // views, including the command reader, use the existing owner draft cache.
+  // These panels take priority over the reader rather than being replaced.
+  const priorityPromptReplacementOpen =
     approvalPanelNode !== null
     || dialogSnapshot !== null
     || overlay.kind === 'tips'
@@ -6226,6 +6302,7 @@ export function Chat({
     || questionPanelNode !== null
     || starModal !== null
     || couponVisible
+  const promptReplacementOpen = priorityPromptReplacementOpen || overlay.kind === 'command-output'
 
   // The trajectory scene replaces the conversation for as long as it is open.
   // Rendering it INSTEAD of (not above) the transcript is what makes it a
@@ -6238,6 +6315,21 @@ export function Chat({
   if (sceneOpen && launchpadGate()) {
     const scene = <TrajectoryScene channel={channel} build={trajectory} onClose={closeScene} />
     return fullscreen ? scene : <AlternateScreen>{scene}</AlternateScreen>
+  }
+
+  if (commandReport !== undefined && !priorityPromptReplacementOpen) {
+    const reader = <CommandOutputPanel
+      key={overlay.kind === 'command-output' ? overlay.rowId : undefined}
+      title={commandReport.title}
+      lines={commandReport.lines}
+      onClose={() => dispatchOverlay({ type: 'close-if', kind: 'command-output' })}
+      onCopy={() => {
+        const text = commandReport.lines.join('\n')
+        void setClipboard(text).then(raw => { if (raw) writeRaw?.(raw) })
+        channel.notify(t('copied-chars', { n: text.length }), { timeoutMs: 1500 })
+      }}
+    />
+    return fullscreen ? reader : <AlternateScreen>{reader}</AlternateScreen>
   }
 
   /**
