@@ -9,7 +9,9 @@ import { stringWidth } from '../ink/stringWidth.js'
 import { POINTER, TICK, MULTIPLICATION_X } from '../terminal-utils/figures.js'
 import type { Theme } from '../theme.js'
 import { getLang, t, type I18nKey } from '../i18n.js'
-import { SettingsForm } from '../dsh-adapter/settingsEditor.js'
+import { getPath, SettingsForm } from '../dsh-adapter/settingsEditor.js'
+import { effortDefaultOptions } from '../settings/effort.js'
+import type { EffortOption } from '../adapter/ports/channel-view.js'
 import type { TuiSettingsField, TuiSettingsFieldKind, TuiSettingsGroup, TuiSettingsSection } from '../dsh-adapter/settings-sections.js'
 import type { LocalizedDescriptions } from '../commands.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
@@ -34,6 +36,14 @@ interface EditingState {
 interface ActiveGroup {
   ns: string
   id: string
+}
+
+interface EffortCatalog {
+  provider: string
+  model: string
+  agentId: string
+  levelsKey: string | undefined
+  efforts: readonly EffortOption[]
 }
 
 /** One focusable row on either the root page or a group subpage. */
@@ -441,7 +451,35 @@ export function Settings({
   // host-keyed effects below on every render (an endless render loop).
   const host = channel.settingsHost()
   const [namespaces, setNamespaces] = React.useState(() => host?.listNamespaces() ?? [])
-  const [sections, setSections] = React.useState(() => channel.settingsSections())
+  const [registeredSections, setSections] = React.useState(() => channel.settingsSections())
+  const provider = channel.provider
+  const model = channel.model
+  const agentId = channel.agentId
+  const effortLevelsKey = JSON.stringify(channel.effortLevels)
+  const hasEffortDefault = registeredSections.some(section => section.ns === channel.settingsNamespace
+    && section.fields.some(field => field.path.join('.') === 'effortDefault'))
+  const [effortCatalog, setEffortCatalog] = React.useState<EffortCatalog | undefined>(undefined)
+  React.useEffect(() => {
+    if (!hasEffortDefault) return
+    let stale = false
+    void channel.listEfforts({ provider, model }).then(({ efforts }) => {
+      if (!stale) setEffortCatalog({ provider, model, agentId, levelsKey: effortLevelsKey, efforts })
+    }).catch(() => {
+      // Keep Auto and the saved preference available on a catalog failure.
+      if (!stale) setEffortCatalog({ provider, model, agentId, levelsKey: effortLevelsKey, efforts: [] })
+    })
+    return () => { stale = true }
+  }, [channel, hasEffortDefault, provider, model, agentId, effortLevelsKey])
+  const liveEfforts = effortCatalog !== undefined && effortCatalog.provider === provider && effortCatalog.model === model
+    && effortCatalog.agentId === agentId && effortCatalog.levelsKey === effortLevelsKey
+    ? effortCatalog.efforts : undefined
+  const sections = React.useMemo(() => registeredSections.map(section => {
+    if (section.ns !== channel.settingsNamespace) return section
+    const value = namespaces.find(view => view.ns === section.ns)?.value
+    return { ...section, fields: section.fields.map(field => field.path.join('.') === 'effortDefault'
+      ? { ...field, options: effortDefaultOptions(liveEfforts, getPath(value, field.path)) }
+      : field) }
+  }), [registeredSections, channel.settingsNamespace, namespaces, liveEfforts])
   const [mode, setMode] = React.useState<SettingsMode>('list')
   const [editing, setEditing] = React.useState<EditingState | null>(null)
   const [activeGroup, setActiveGroup] = React.useState<ActiveGroup | null>(null)
@@ -475,6 +513,7 @@ export function Settings({
       const kept = formsRef.current.get(section.ns)
       const reuse = kept !== undefined && (kept.namespace === view || kept.shell().dirty)
       const form = reuse ? kept : new SettingsForm(host, view, section.fields)
+      if (reuse) form.updateFields(section.fields)
       forms.set(section.ns, form)
     }
   }

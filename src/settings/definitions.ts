@@ -84,15 +84,11 @@ export const SETTING_DEFINITIONS = {
     label: 'Default reasoning effort',
     descriptions: { zh: '默认推理强度' },
     group: 'conversation',
-    hint: 'Reasoning-effort level new sessions start on; the current session applies it to its next request too, when the model offers the tier (an unlisted level falls back to the model default). Auto = follow the cordis.yml `effort` pin, then the persisted /effort choice, then the model default.',
-    hintDescriptions: { zh: '新会话起始的推理强度档位；模型提供该档位时，当前会话的下一请求也会应用（模型不提供的档位会静默回落到模型默认）。自动 = 依次跟随 cordis.yml 的 effort 配置、持久化的 /effort 选择、模型默认档。' },
+    hint: 'Choices follow the current model\'s effort IDs. For DSH, this global preference applies to new sessions and the next request; an unsupported preference uses the nearest lower known tier, or the model default, with a notice. Auto follows the persisted /effort choice, then cordis.yml `effort`, then the model default.',
+    hintDescriptions: { zh: '选项来自当前模型的推理强度 ID。DSH 的全局偏好应用于新会话及下一请求；不支持的偏好会使用已知档位中最近的更低档，或模型默认，并提示。自动依次跟随持久化的 /effort 选择、cordis.yml 的 effort 配置、模型默认档。' },
     kind: 'select',
     options: [
-      { value: 'auto', label: 'Auto (model default)', descriptions: { zh: '自动（模型默认）' } },
-      { value: 'off', label: 'Off', descriptions: { zh: '关闭' } },
-      { value: 'low', label: 'Low', descriptions: { zh: '低' } },
-      { value: 'high', label: 'High', descriptions: { zh: '高' } },
-      { value: 'max', label: 'Max', descriptions: { zh: '最高' } },
+      { value: 'auto', label: 'Auto (follow preferences)', descriptions: { zh: '自动（跟随偏好）' } },
     ],
   },
   'expandEditor': {
