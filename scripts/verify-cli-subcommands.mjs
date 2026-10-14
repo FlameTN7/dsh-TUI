@@ -182,7 +182,7 @@ for (const alias of ['version', '--version', '-v']) {
 
 // --- doctor -------------------------------------------------------------------
 {
-  // 无 dsh：诊断照常打印全表，但以退出码 1 收束（dsh 缺失是唯一硬失败）。
+  // 无 dsh：诊断照常打印全表，但以退出码 1 收束。
   const r = run(['doctor'])
   check('doctor 无 dsh 时退出 1 且标注缺失', r.status === 1 && r.stdout.includes('✗ dsh'), `status=${r.status}`)
 }
@@ -192,12 +192,12 @@ for (const alias of ['version', '--version', '-v']) {
   const stubDir = join(tmp, 'doctor-stub')
   mkdirSync(stubDir, { recursive: true })
   writeFileSync(join(stubDir, 'dsh'), '#!/bin/sh\necho 9.9.9-dsh-stub\nexit 0\n')
-  writeFileSync(join(stubDir, 'pnpm'), '#!/bin/sh\necho 9.9.9-pnpm-stub\nexit 0\n')
+  writeFileSync(join(stubDir, 'pnpm'), '#!/bin/sh\necho 10.0.0\nexit 0\n')
   ;(await import('node:fs')).chmodSync(join(stubDir, 'dsh'), 0o755)
   ;(await import('node:fs')).chmodSync(join(stubDir, 'pnpm'), 0o755)
   const SECRET = 'sk-hunt-secret-marker'
   const r = run(['doctor'], { PATH: stubDir, DEEPSEEK_API_KEY: SECRET })
-  check('doctor 有 dsh/pnpm 时退出 0 并打印版本', r.status === 0 && r.stdout.includes('9.9.9-dsh-stub') && r.stdout.includes('9.9.9-pnpm-stub'), `status=${r.status}`)
+  check('doctor 有 dsh/受支持 pnpm 时退出 0 并打印版本', r.status === 0 && r.stdout.includes('9.9.9-dsh-stub') && r.stdout.includes('✓ pnpm: 10.0.0'), `status=${r.status}`)
   check('doctor 报告 profile 版本', r.stdout.includes('1.2.3-stub'))
   check('doctor 报告密钥已设置', r.stdout.includes('已设置'))
   check('doctor 绝不输出密钥值（红线）', !r.stdout.includes(SECRET) && !r.stderr.includes(SECRET))

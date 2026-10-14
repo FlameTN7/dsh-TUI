@@ -402,6 +402,7 @@ const GROUPS = {
 // CLI 子命令回归（issue #509）：help/version 零环境应答（不触发自举
 // 与委托）、双语输出、profile 版本读取、只认第一个参数。
     ["verify-cli-subcommands", ['node', 'scripts/verify-cli-subcommands.mjs']],
+    ["verify-doctor-toolchain", ['node', 'scripts/verify-doctor-toolchain.mjs']],
 // 安全模式回归（PR① spec）：safe 子命令零环境可用与非 TTY 降级、
 // 控制面只读（文件系统快照）、插件清单解析矩阵、fallback 触发矩阵
 // （非 TTY）、doctor 提取行为等价（完整期望值 golden）。

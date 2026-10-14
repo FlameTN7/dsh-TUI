@@ -139,7 +139,7 @@ dsh-tui.cmd --resume
 | 命令 | 作用 |
 | --- | --- |
 | `dsh-tui update` | 更新 profile 到最新版本并对齐启动器（与 TUI 内 `/update` 同一安装逻辑，不进入 TUI） |
-| `dsh-tui doctor` | 环境检查：dsh/pnpm、profile 安装与版本对齐、API key 是否设置（只报状态不读值）、配置文件存在性；与 TUI 内 `/doctor` 会话诊断互补 |
+| `dsh-tui doctor` | 环境检查：Node `^22.19 \|\| >=24`、pnpm `>=10` 正式版、dsh、profile 安装与版本对齐、API key 是否设置（只报状态不读值）、配置文件存在性；工具链缺失或不兼容时完成检查后退出 1；与 TUI 内 `/doctor` 会话诊断互补 |
 | `dsh-tui safe` | 安全模式：只读诊断、插件清单与修复指引（`safe --rescue` 还会创建/校验干净的救援 profile） |
 | `dsh-tui version` | 显示启动器与 profile 版本（`--version`/`-v` 等价） |
 | `dsh-tui help` | 显示用法（`--help`/`-h` 等价） |

@@ -148,6 +148,8 @@ source builds, and troubleshooting, including migration from the former
 | `dsh-tui safe` | Read-only diagnostics, plugin inventory and repair guidance; `safe --rescue` builds a clean rescue profile |
 | `dsh-tui version` · `dsh-tui help` | Launcher and profile versions and usage; both work even without a `dsh` install |
 
+`dsh-tui doctor` checks Node `^22.19 || >=24` and pnpm `>=10` (stable releases). Missing or unsupported tools produce upgrade guidance and exit status 1 after the remaining checks run.
+
 Leading DSH options such as `--dump-config` and `--patch <path>` are forwarded
 unchanged; other arguments go to the app in `dsh --profile dsh-tui`. Use
 `dsh-tui -- --resume=sid-1 ./notes` to send `--resume=sid-1 ./notes` as literal

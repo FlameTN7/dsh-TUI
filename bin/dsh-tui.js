@@ -444,8 +444,10 @@ const MSG = {
   },
   doctorLabels: {
     en: {
+      nodeUnsupported: 'unsupported — use a stable Node release matching ^22.19 || >=24',
       dshMissing: 'not found — install it first:  npm install -g @deepseek-ai/dsh',
       pnpmMissing: 'not found — needed for install/update:  npm install -g pnpm',
+      pnpmUnsupported: 'requires stable pnpm >=10 — upgrade:  npm install -g pnpm@10',
       profileMissing: 'not installed — run `dsh-tui` once to bootstrap it',
       aligned: 'aligned',
       profileNewer: v => `profile is newer — align the launcher:  npm install -g ${PACKAGE}@${v}`,
@@ -457,8 +459,10 @@ const MSG = {
       missing: 'missing',
     },
     zh: {
+      nodeUnsupported: '不支持——请使用满足 ^22.19 || >=24 的 Node 正式版',
       dshMissing: '未找到——请先安装：  npm install -g @deepseek-ai/dsh',
       pnpmMissing: '未找到——安装/升级需要它：  npm install -g pnpm',
+      pnpmUnsupported: '需要 pnpm >=10 正式版——请升级：  npm install -g pnpm@10',
       profileMissing: '未安装——运行一次 `dsh-tui` 即可自举',
       aligned: '已对齐',
       profileNewer: v => `profile 较新——对齐启动器：  npm install -g ${PACKAGE}@${v}`,
@@ -635,17 +639,21 @@ const credentialRefDeclared = (home, name) => {
 }
 
 // ─── doctor 检查逻辑（doctor 子命令与 safe 会话共用）──────────────────────────
-// 输出与退出语义与单命令时代逐字一致：版本探针白名单回显、密钥只报
-// truthiness（env 或凭据库 ref 任一命中即视为已设置）、仅 dsh 缺失为硬
-// 失败。safe 复用同一函数——两个入口的 diagnostics 不许分叉（对齐 doctor
-// 与 TUI 内 /doctor 的既有契约）。
+// 版本探针白名单回显，密钥只报 truthiness（env 或凭据库 ref 任一命中即
+// 视为已设置）。工具链不兼容或缺失为硬失败，仍打印全部检查供排障。
+// safe 复用同一函数，两个入口的 diagnostics 不许分叉。
 const runDoctorChecks = () => {
   const L = msg('doctorLabels')
   const lines = []
-  let hardFailure = false
+  // Mirrors package.json engines.node; the black-box regression checks the
+  // boundary versions against that contract. Keep this launcher dependency-free.
+  const nodeVersion = parseVersion(process.versions.node)
+  const nodeSupported = nodeVersion !== null && nodeVersion.pre === null
+    && ((nodeVersion.major === 22 && nodeVersion.minor >= 19) || nodeVersion.major >= 24)
+  let hardFailure = !nodeSupported
   const report = (ok, label, detail) => lines.push(`${ok ? '✓' : '✗'} ${label}: ${detail}`)
   lines.push(`dsh-tui doctor · ${PACKAGE} ${ownVersion ?? 'unknown'}`)
-  report(true, 'node', `${process.version} · ${process.platform} ${process.arch}`)
+  report(nodeSupported, 'node', `${process.version} · ${process.platform} ${process.arch}${nodeSupported ? '' : ` · ${L.nodeUnsupported}`}`)
   const probeVersion = command => {
     const probe = spawnSync(...cmd(command, ['--version']), { stdio: 'pipe', encoding: 'utf8', ...shellOpt })
     if (probe.error || probe.status !== 0) return undefined
@@ -663,7 +671,12 @@ const runDoctorChecks = () => {
     report(true, 'dsh', dshVersion)
   }
   const pnpmVersion = probeVersion('pnpm')
-  report(pnpmVersion !== undefined, 'pnpm', pnpmVersion ?? L.pnpmMissing)
+  // pnpm 9 ignores the profile's pnpm-workspace.yaml installation policy.
+  const parsedPnpm = parseVersion(pnpmVersion?.replace(/^v/, ''))
+  const pnpmSupported = parsedPnpm !== null && parsedPnpm.pre === null && parsedPnpm.major >= 10
+  if (!pnpmSupported) hardFailure = true
+  report(pnpmSupported, 'pnpm', pnpmVersion === undefined ? L.pnpmMissing
+    : `${pnpmVersion}${pnpmSupported ? '' : ` · ${L.pnpmUnsupported}`}`)
   const profileVersion = readJson(installedPkgPath)?.version
   if (profileVersion === undefined) {
     report(false, 'profile', `${L.profileMissing}  (${profileDir})`)
@@ -765,8 +778,8 @@ const renderSafeReport = extraLines => {
 // 启动前环境诊断——针对「TUI 起不来」的故障域（装不上、update 后版本不
 // 同步、密钥没配），与 TUI 内 /doctor 的会话内诊断互补。零 lib 依赖、
 // 不委托、不自举：profile 残缺时它必须还能跑。密钥红线：只报告是否已
-// 设置，绝不输出值。仅 dsh 缺失记为硬失败（其余检查全部照常打印后再
-// 以退出码 1 收束）。
+// 设置，绝不输出值。缺失或不兼容的工具链记为硬失败，全部检查照常
+// 打印后再以退出码 1 收束。
 if (subcommand === 'doctor') {
   const { hardFailure, lines } = runDoctorChecks()
   for (const line of lines) console.log(line)

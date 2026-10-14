@@ -122,6 +122,8 @@ TUI 启动后会在后台检查新版本，不阻塞首帧。有更新时输入 
 | `dsh-tui safe` | 只读诊断、插件清单与修复指引；`safe --rescue` 创建干净的救援 profile |
 | `dsh-tui version` · `dsh-tui help` | 启动器与 profile 版本、用法；没装 dsh 时这两条也能用 |
 
+`dsh-tui doctor` 会检查 Node `^22.19 || >=24` 和 pnpm `>=10` 正式版；工具缺失或版本不支持时给出安装/升级指引，完成其余检查后以退出码 1 结束。
+
 前置 DSH 选项（如 `--dump-config`、`--patch <路径>`）原样转发，
 其余参数交给 `dsh --profile dsh-tui` 中的应用。使用
 `dsh-tui -- --resume=sid-1 ./notes` 可将 `--resume=sid-1 ./notes` 作为字面提示词，

@@ -134,7 +134,7 @@ the same commands:
 | Command | Purpose |
 | --- | --- |
 | `dsh-tui update` | Update the profile to the latest release and align the launcher (same install logic as the in-TUI `/update`, without restarting into the TUI) |
-| `dsh-tui doctor` | Environment checks: dsh/pnpm, profile install and version alignment, whether the API key is set (state only, never the value), config file presence; complements the in-TUI `/doctor` session diagnostics |
+| `dsh-tui doctor` | Environment checks: stable Node `^22.19 \|\| >=24` and pnpm `>=10`, dsh, profile install and version alignment, whether the API key is set (state only, never the value), config file presence; missing or unsupported tools cause exit 1 after all checks; complements the in-TUI `/doctor` session diagnostics |
 | `dsh-tui safe` | Safe mode: read-only diagnostics, inventory, repair guidance (`safe --rescue` also creates/verifies the clean rescue profile) |
 | `dsh-tui version` | Show the launcher and profile versions (`--version`/`-v` are equivalent) |
 | `dsh-tui help` | Show usage (`--help`/`-h` are equivalent) |
