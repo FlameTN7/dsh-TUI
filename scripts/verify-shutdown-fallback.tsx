@@ -7,11 +7,13 @@
  * notice is written and control returns to the shell.
  */
 import { readFileSync } from 'node:fs'
-import { Writable } from 'node:stream'
+import { PassThrough, Writable } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
 import { createExitFunnel, finishExit, runCrashExit, writeCrashResumeMarkers } from '../src/dsh-adapter/plugin.js'
 import { UNSERIALIZABLE } from '../src/utils/crashDetail.js'
 import instances from '../src/ink/instances.js'
+import render from '../src/ink/root.js'
+import { DISABLE_MOUSE_TRACKING } from '../src/ink/termio/dec.js'
 
 let failures = 0
 const results: string[] = []
@@ -85,6 +87,79 @@ swapStdout(originalStdout)
 instances.delete(captured)
 check('runtime-present shutdown detaches without unmount', detaches === 1 && handoffs === 1 && unmountsB === 0 && doneB)
 check('runtime-present shutdown prints the notice', captured.chunks.join('').includes('hint-two'))
+
+// Real render handles must preserve the late drain when the stdout map misses
+// (#619), and bind it to the renderer's input rather than process.stdin.
+class ShutdownInput extends PassThrough {
+  isTTY = true
+  isRaw = false
+  setRawMode(raw: boolean): this { this.isRaw = raw; return this }
+  ref(): this { return this }
+  unref(): this { return this }
+}
+const originalStdin = Object.getOwnPropertyDescriptor(process, 'stdin')!
+for (const mapped of [true, false]) {
+  for (const tty of [true, false]) {
+    const input = new ShutdownInput()
+    input.isTTY = tty
+    const unrelated = new ShutdownInput()
+    unrelated.write('shell-owned input')
+    Object.defineProperty(process, 'stdin', { configurable: true, value: unrelated })
+    let inject = false
+    let arrivals = 0
+    const output = Object.assign(new Writable({
+      write(chunk, _encoding, callback) {
+        if (inject && String(chunk).includes(DISABLE_MOUSE_TRACKING)) {
+          // Fixture RTT: arrive AFTER detach and the terminal cleanup write.
+          setImmediate(() => { input.write('\x1b[?1003;2$y'); arrivals += 1 })
+        }
+        callback()
+      },
+    }), { isTTY: true, columns: 80, rows: 24 }) as unknown as NodeJS.WriteStream
+    const handle = await render(null, {
+      stdout: output, stdin: input as unknown as NodeJS.ReadStream,
+      patchConsole: false, exitOnCtrlC: false, terminalImages: false,
+    })
+    try {
+      swapStdout(output)
+      if (!mapped) instances.delete(output)
+      inject = true
+      let completions = 0
+      await finishExit(ctx, handle, false, undefined, undefined, () => { completions += 1 })
+      check(`real handle ${mapped ? 'mapped' : 'fallback'} ${tty ? 'TTY' : 'non-TTY'}: late response arrived`, arrivals === 1)
+      check(`real handle ${mapped ? 'mapped' : 'fallback'} ${tty ? 'TTY' : 'non-TTY'}: drain respects input ownership`,
+        input.readableLength === (tty ? 0 : 11) && unrelated.readableLength === 17)
+      if (tty) {
+        // Repeated detach is idempotent; the second exit must still re-drain
+        // bytes which arrived after its own cleanup, and leave no stdin pump.
+        await finishExit(ctx, handle, false, undefined, undefined, () => { completions += 1 })
+        check(`real handle ${mapped ? 'mapped' : 'fallback'}: repeated shutdown re-drains`,
+          arrivals === 2 && input.readableLength === 0 && completions === 2 && !input.isRaw && input.listenerCount('readable') === 0)
+        input.write('child input')
+        await new Promise<void>(resolve => setImmediate(resolve))
+        check(`real handle ${mapped ? 'mapped' : 'fallback'}: handoff leaves later child input alone`, input.readableLength === 11)
+        if (!mapped) {
+          inject = false
+          let completedAfterFailure = false
+          await finishExit(ctx, {
+            ...handle,
+            drainStdin() { throw new Error('revoked stdin') },
+          }, false, undefined, undefined, () => { completedAfterFailure = true })
+          check('real handle: a failed drain hook still reaches the exit continuation', completedAfterFailure)
+        }
+      }
+    } finally {
+      inject = false
+      handle.unmount()
+      handle.cleanup()
+      swapStdout(originalStdout)
+      Object.defineProperty(process, 'stdin', originalStdin)
+      input.destroy()
+      unrelated.destroy()
+      output.destroy()
+    }
+  }
+}
 
 // ── Cases C/D (r1-stability S03): the crash tail's diagnostics are fully ──
 // degradable while the terminal cleanup runs exactly once, no matter what

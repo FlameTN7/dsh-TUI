@@ -82,6 +82,8 @@ export type Instance = {
    * for the listener/pump semantics.
    */
   detachStdinForHandoff: Ink['detachStdinForHandoff']
+  /** Re-drain this renderer's stdin after terminal cleanup settles. */
+  drainStdin: Ink['drainStdin']
   cleanup: () => void
 }
 
@@ -131,6 +133,7 @@ export const renderSync = (
     waitUntilExit: instance.waitUntilExit,
     detachForShutdown: () => instance.detachForShutdown(),
     detachStdinForHandoff: () => instance.detachStdinForHandoff(),
+    drainStdin: () => instance.drainStdin(),
     cleanup: () => instances.delete(inkOptions.stdout),
   }
 }
