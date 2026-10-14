@@ -66,6 +66,7 @@ const [
 import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
 import type { AgentInput, AgentSession, SubmitPlacement } from '../src/agent/session.js'
 import type { SessionCapabilities } from '../src/agent/capabilities.js'
+import type { PromptController } from '../src/components/PromptInput.js'
 
 setLang('en')
 let passed = 0
@@ -138,6 +139,7 @@ interface Harness {
   readonly submits: { input: AgentInput; placement: SubmitPlacement }[]
   emit(events: readonly AgentEvent[]): void
   screen(): string
+  draft(): string | undefined
   typeLine(text: string): Promise<void>
   enter(): Promise<void>
   unmount(): Promise<void>
@@ -175,8 +177,9 @@ async function mountChat(capabilities: Omit<SessionCapabilities, 'native'>, wrap
   }
   const stdin = new FakeStdin()
   const stdout = new FakeStdout()
+  const promptControllerRef = React.createRef<PromptController | null>()
   const instance = await ui.render(
-    React.createElement(Chat, { channel: (wrap?.(channel) ?? channel) as never, questionStore: new QuestionStore(), approvalStore: new ApprovalStore(), onExit: () => undefined, fullscreen: false, trajectorySeen: true }),
+    React.createElement(Chat, { channel: (wrap?.(channel) ?? channel) as never, questionStore: new QuestionStore(), approvalStore: new ApprovalStore(), promptControllerRef, onExit: () => undefined, fullscreen: false, trajectorySeen: true }),
     { stdout: stdout as never, stdin: stdin as never, stderr: stdout as never, exitOnCtrlC: false, patchConsole: false },
   )
   for (const value of instances.values()) instances.set(process.stdout, value)
@@ -188,6 +191,7 @@ async function mountChat(capabilities: Omit<SessionCapabilities, 'native'>, wrap
     submits,
     emit: events => { for (const listener of [...listeners]) listener(events, { replay: false, wake: 'sync' }) },
     screen,
+    draft: () => promptControllerRef.current?.text(),
     typeLine: async text => {
       for (const char of text) stdin.write(char)
       // 固定窗:pacing the prompt applies typed characters on its own render tick.
@@ -294,15 +298,34 @@ const toastsOf = (channel: { notifications: readonly { text: string }[] }): stri
   await h.typeLine('/goal registry route')
   await h.enter()
   check('4 a registry row owns /goal (DSH route unchanged)', await settled(() => external.includes('goal| registry route')) && hostCalls === 0 && h.submits.length === 0, external.join(','))
+  check('4 the registry pause-shaped result remains a local report and opens its reader',
+    await settled(() => blocks.length === 1 && h.screen().includes('Goal paused')
+      && h.screen().includes('Status: paused') && h.screen().includes('c copy'))
+      && eq(blocks[0]?.lines, ['Goal paused', 'Status: paused']), h.screen())
+  const callsBeforeReaderInput = external.length
+  await h.typeLine('/goal')
+  await h.enter()
+  check('4 the result reader owns typing and Enter until dismissed',
+    external.length === callsBeforeReaderInput && h.screen().includes('c copy')
+      && h.submits.length === 0, `${external.join(',')}\n${h.screen()}`)
+  await h.typeLine('\x1b')
+  check('4 Esc closes the pause report and restores the consumed empty draft',
+    await settled(() => !h.screen().includes('c copy') && h.draft() === '')
+      && external.length === callsBeforeReaderInput && h.submits.length === 0, h.screen())
+  const blocksBeforeStatus = blocks.length
   await h.typeLine('/goal')
   await h.enter()
   check('4 bare /goal over the registry row prints a transcript block',
-    await settled(() => blocks.length === 1) && blocks[0]?.title === '/goal'
-    && blocks[0]?.lines.length === 6 && blocks[0]?.lines.includes(`Objective: ${longObjective}`)
-    && (blocks[0]?.lineLimit ?? 0) > 240, JSON.stringify(blocks).slice(0, 400))
+    await settled(() => blocks.length === blocksBeforeStatus + 1 && external.at(-1) === 'goal|')
+    && blocks[blocksBeforeStatus]?.title === '/goal'
+    && blocks[blocksBeforeStatus]?.lines.length === 6 && blocks[blocksBeforeStatus]?.lines.includes(`Objective: ${longObjective}`)
+    && (blocks[blocksBeforeStatus]?.lineLimit ?? 0) > 240, JSON.stringify(blocks).slice(0, 400))
   check('4 … with the whole objective on screen (no 200/240-cell truncation)',
     await settled(() => h.screen().includes('REGISTRY_GOAL_TAIL')), h.screen())
   check('4 … and the status text does not also ride a toast', !toastsOf(h.channel).includes('Registry goal head'), toastsOf(h.channel))
+  check('4 bare registry /goal retains its status-block presentation without opening a reader',
+    h.screen().includes('REGISTRY_GOAL_TAIL') && !h.screen().includes('c copy')
+      && h.draft() === '' && h.submits.length === 0, h.screen())
   await h.unmount()
 }
 

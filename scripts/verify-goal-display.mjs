@@ -82,7 +82,9 @@ function makeChannel({ externalGoal = false, goal = undefined } = {}) {
     commandCompletions: () => [], listFiles: async () => [], listModels: async () => [],
     loadOlder: () => 0, cycleMode() {}, setResumeTarget() {}, submit() { channel.submitted++ },
     cancel() { channel.cancelled++ }, submitted: 0, cancelled: 0,
-    runExternalCommandOutcome: () => Promise.resolve({ kind: 'success', text: DSH_STATUS, consumeDraft: true }),
+    runExternalCommandOutcome: (_name, rawInput) => Promise.resolve({
+      kind: 'success', text: rawInput.trim() === '' ? DSH_STATUS : 'Goal paused', consumeDraft: true,
+    }),
     // Mirrors the core's row shape (local + one local-output row per line).
     pushLocal(title, lines, options) {
       channel.localBlocks.push({ title, lines: [...lines], lineLimit: options?.lineLimit })

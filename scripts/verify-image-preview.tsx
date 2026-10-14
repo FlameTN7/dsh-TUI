@@ -1251,6 +1251,11 @@ for (const columns of [32, 80]) {
     notify(text: string, options?: { color?: string }) {
       commandNotices.push({ text, color: options?.color })
     },
+    pushLocal(title: string, lines: readonly string[]) {
+      let id = channel.rows.at(-1)!.id + 1
+      channel.rows.push({ id: id++, kind: 'local', text: title })
+      for (const text of lines) channel.rows.push({ id: id++, kind: 'local-output', text })
+    },
     discardStagedImage(stageId: string) { discarded.push(stageId) },
     runExternalCommandOutcome(
       _name: string,
@@ -1266,7 +1271,7 @@ for (const columns of [32, 80]) {
         cancelLabel: 'Cancel',
       }).then(() => ({
         kind: 'error' as const,
-        text: `\u001b[31mPlugin result\u001b[0m\n${'🌈'.repeat(150)}`,
+        text: `\u001b[31mPlugin result\u001b[0m\u0007\u009b\n${'🌈'.repeat(150)}`,
         consumeDraft: false,
       }))
     },
@@ -1301,6 +1306,7 @@ for (const columns of [32, 80]) {
   check('chat dialog: image command draft is capability-backed',
     await settled(() => screen.text().includes('/vision-dialog') && screen.text().includes('[Image #1]')),
     screen.text())
+  const noticesBeforeCommand = commandNotices.length
   stdin.write('\r')
   check('chat dialog: the real managed dialog replaces the composer',
     await settled(() => screen.text().includes('DRAFT-LEASE-DIALOG'))
@@ -1320,9 +1326,27 @@ for (const columns of [32, 80]) {
     submitted.length === 0 && !discarded.includes('stage-1'),
     `submitted=${JSON.stringify(submitted)}, discarded=${JSON.stringify(discarded)}`)
   stdin.write('\x03')
-  check('chat dialog: Ctrl+C cancels only the dialog and restores the exact draft',
+  check('chat dialog: Ctrl+C cancels only the dialog and opens its local error report',
     await settled(() =>
       dialogStore.getSnapshot() === null
+      && screen.text().includes('/vision-dialog (error)')
+      && screen.text().includes('c copy'))
+      && !discarded.includes('stage-1')
+      && channel.hasStagedImage('stage-1'),
+    `${JSON.stringify(discarded)}\n${screen.text()}`)
+  const commandReport = channel.rows.filter(row => row.kind === 'local-output')
+  check('chat command: multiline error reports retain sanitized text beyond the notification budget',
+    commandReport.length === 2
+      && commandReport[0]?.text === 'Plugin result'
+      && commandReport[1]?.text === '🌈'.repeat(150)
+      && stringWidth(commandReport[1].text) === 300
+      && commandReport.every(row => !/[\u0000-\u001f\u007f-\u009f]/u.test(row.text))
+      && commandNotices.length === noticesBeforeCommand,
+    JSON.stringify({ commandReport, commandNotices }))
+  stdin.write('\x1b')
+  check('chat command: closing the report restores the exact image draft and its capability',
+    await settled(() =>
+      !screen.text().includes('c copy')
       && screen.text().includes('/vision-dialog')
       && screen.text().includes('[Image #1]')
       && !screen.text().includes('LEAK-SENTINEL')
@@ -1330,14 +1354,6 @@ for (const columns of [32, 80]) {
       && !discarded.includes('stage-1')
       && channel.hasStagedImage('stage-1'),
     `${JSON.stringify(discarded)}\n${screen.text()}`)
-  const commandNotice = commandNotices.at(-1)
-  check('chat command: result notices are bounded single-line text and retain error styling',
-    commandNotice?.text.startsWith('Plugin result 🌈') === true
-      && commandNotice.text.endsWith('…')
-      && !/[\u0000-\u001f\u007f-\u009f]/u.test(commandNotice.text)
-      && stringWidth(commandNotice.text) <= 200
-      && commandNotice.color === 'error',
-    JSON.stringify(commandNotice))
   injector?.append(' POST-DIALOG')
   check('chat dialog: external injection resumes only after the dialog closes',
     await settled(() => screen.text().includes('POST-DIALOG')),

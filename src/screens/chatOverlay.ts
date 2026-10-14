@@ -107,6 +107,7 @@ export type ChatOverlay =
   // closing so n/N keep walking the matches.
   | { kind: 'search' }
   | { kind: 'tips' }
+  | { kind: 'command-output'; rowId: number; generation: number }
   /**
    * 帮助菜单（第八版：用户实测——启动页点「帮助」直接进了聊天页 ✗）。这个
    * variant 只在**落地页**上打开：HelpMenu 经 Chat 的 pickerPanels 挂进
