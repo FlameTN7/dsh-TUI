@@ -763,6 +763,7 @@ const GROUPS = {
 // subtle 且不提亮查询命中，点击映射与命令索引一一对应，36 列不换行；浏览型
 // `/resume` 与门禁型 `/rewind` 同族不同区（只开界面的在上、会被拒的沉底）。
     ["verify-command-hold-overlay", ['node', '--import', 'tsx/esm', 'scripts/verify-command-hold-overlay.tsx']],
+    ["verify-prompt-escape", ['node', '--import', 'tsx/esm', 'scripts/verify-prompt-escape.tsx']],
   ],
   'channel-ui': [
 // L4 composition boundary plus report/metadata lifetime fences.

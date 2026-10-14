@@ -453,7 +453,7 @@ export interface PromptController {
    * branch calls this first, before its clear/exit semantics.
    */
   consumeSelectionCopy(): boolean
-  /** Consume selection/editor Esc before Chat's working-turn interrupt. */
+  /** Consume local menu/selection/editor Esc before Chat's turn interrupt. */
   consumeEscape(): boolean
   /** Toggle vim editing mode (`/vim`); returns the new state (true = on). */
   toggleVim(): boolean
@@ -1117,7 +1117,7 @@ export function PromptInput({
         // The selection stays: copy never clears it (Esc/typing/delete do).
         return true
       },
-      consumeEscape: consumeEditingEscape,
+      consumeEscape: consumeLocalEscape,
       toggleVim: () => {
         const next = !vimEnabledRef.current
         vimEnabledRef.current = next
@@ -1304,16 +1304,20 @@ export function PromptInput({
   }, [channel, mention?.query, atTrigger])
   // Esc dismisses the overlay for the token being edited (it reopens once the
   // text changes); it must NOT clear a mid-message input.
+  const [fileEsc, setFileEsc] = React.useState(-1)
+  // State redraws the menu; the ref lets later keys in the same stdin batch
+  // observe the dismissal before React commits it.
   const fileEscRef = React.useRef(-1)
   React.useEffect(() => {
     fileEscRef.current = -1
+    setFileEsc(-1)
   }, [value])
   const fileOverlayOpen =
     fileMatches.length > 0 &&
     !expanded &&
     !helpOpen &&
     !selectionActive &&
-    fileEscRef.current !== mention?.start
+    fileEsc !== mention?.start
 
   /**
    * The `[Image #N]` tokens of `text` that carry a live draft capability.
@@ -2107,7 +2111,20 @@ export function PromptInput({
 
   /** Local Esc layers, shared by the prompt listener and Chat's delegation.
    * Refs preserve this order even when expansion and Esc share a stdin batch. */
-  const consumeEditingEscape = (): boolean => {
+  const consumeLocalEscape = (): boolean => {
+    // Chat asks before its working-turn interrupt. Closing a completion menu
+    // must have the same meaning while idle and while a turn is running.
+    if (overlayOpen && valueRef.current.startsWith('/')) {
+      clearDraftUndoably()
+      return true
+    }
+    if (fileOverlayOpen && fileEscRef.current !== mention?.start) {
+      // Only dismiss this token's menu; preserve the surrounding draft.
+      // State (not just a ref) makes the dismissal render even while idle.
+      fileEscRef.current = mention?.start ?? -1
+      setFileEsc(fileEscRef.current)
+      return true
+    }
     // The docked-queue selector folds first: Esc leaves the selector and the
     // dock itself stays put (⏎/↑ keep working afterwards).
     if (dockSelectedRef.current !== null) {
@@ -2303,7 +2320,7 @@ export function PromptInput({
     // ONLY drops the highlight (text untouched), and Backspace/Delete
     // delete the selected span. Arrows/typing handle the selection at their
     // own arms below.
-    if (key.escape && consumeEditingEscape()) {
+    if (key.escape && consumeLocalEscape()) {
       event.stopImmediatePropagation()
       return
     }
@@ -3354,18 +3371,6 @@ export function PromptInput({
     if (key.escape) {
       if (helpOpen) {
         onToggleHelp()
-        return
-      }
-      // A single Esc closes the open command menu first;
-      // the double-tap-clear semantics only apply to ordinary input.
-      if (overlayOpen) {
-        clearDraftUndoably()
-        return
-      }
-      // File overlay: Esc dismisses the menu for THIS token only — clearing
-      // the input would nuke a mid-message `@` mention's surrounding text.
-      if (fileOverlayOpen) {
-        fileEscRef.current = mention?.start ?? -1
         return
       }
       // The docked-queue selector folds before anything else: Esc leaves the
