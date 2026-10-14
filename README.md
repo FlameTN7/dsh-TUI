@@ -381,6 +381,7 @@ Full list: [Architecture and limitations → Known limitations](docs/architectur
 ## Development
 
 CI uses Node 24 and pnpm 11. The package supports Node `^22.19 || >=24`.
+The launcher rejects unsupported Node versions before installing or starting a profile, and reports the current version and supported range.
 
 ```sh
 pnpm install --frozen-lockfile
