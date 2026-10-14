@@ -267,6 +267,10 @@ keep the key in the store, no per-shell export needed. When nothing can
 supply it, the session still starts and the reason is reported once as a
 start notice: Codex itself rejects every turn of that provider.
 
+Channel tokens (`CHANNEL_*`) belong to the active DSH home only. They do not
+fall back to another home's store after disconnecting or removing a channel;
+with a custom `DSH_HOME`, save the channel key there again if it was only in `~/.dsh`.
+
 TPS includes hidden reasoning time and excludes tool execution time. Live
 text estimates are corrected when Codex reports output token usage.
 

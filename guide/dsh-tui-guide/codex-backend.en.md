@@ -102,6 +102,11 @@ not orphan a key stored where both READMEs name it; writes only ever target the 
 stored once in the credential store therefore works without exporting a shell variable. The
 value only ever travels into the spawn pipeline, never into logs, notices or events.
 
+Channel refs (`CHANNEL_*`) are scoped to the active home for both reads and writes.
+They never fall back to the default store, so disconnecting or deleting a channel
+cannot reveal an older token from another home. If a channel key only exists in
+the default home, save it again through `/channel` in the active home.
+
 When nothing can supply the key, startup is **not** blocked: Codex itself rejects every turn
 of that provider, so the runtime reports the reason once as a start notice (naming the
 provider and the variable, never a value) — export the key, store it, or move the provider to

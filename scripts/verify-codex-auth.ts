@@ -372,25 +372,49 @@ const latestQuestion = (events: readonly AgentEvent[]): QuestionRequestView => {
 }
 
 // A `DSH_HOME` override must not orphan a key stored where both READMEs name
-// it: reads fall back to the default `~/.dsh` store while writes stay in the
-// active home.
+// it: provider refs fall back to the default store; channel tokens belong only
+// to the active home, so erasing one cannot reveal a token from another home.
 {
   const home = mkdtempSync(join(tmpdir(), 'dsh-creds-default-'))
   const active = mkdtempSync(join(tmpdir(), 'dsh-creds-active-'))
   mkdirSync(join(home, '.dsh'), { recursive: true })
-  writeFileSync(join(home, '.dsh', '.credentials.yaml'), `refs:\n  DEEPSEEK_API_KEY: ${API_KEY}\n`)
+  const ref = channelTokenRef('codex-probe')
+  const defaultStore = `refs:\n  DEEPSEEK_API_KEY: ${API_KEY}\n  ${ref}: ${TOKEN_A}\n`
+  writeFileSync(join(home, '.dsh', '.credentials.yaml'), defaultStore)
   const previousHome = process.env.HOME
+  const previousUserProfile = process.env.USERPROFILE
   const previousDshHome = process.env.DSH_HOME
   process.env.HOME = home
+  process.env.USERPROFILE = home
   process.env.DSH_HOME = active
   try {
     const store = fileChannelTokens()
     check('store: the default ~/.dsh store backs an active home that lacks the ref', store.read('DEEPSEEK_API_KEY') === API_KEY && store.declared('DEEPSEEK_API_KEY') && store.read('ABSENT_REF') === undefined)
+    check('store: a channel token in another home is neither readable nor declared', store.read(ref) === undefined && !store.declared(ref))
     store.write('CHANNEL_PROBE_TOKEN', API_KEY)
     check('store: a write still targets the active home', readFileSync(join(active, '.credentials.yaml'), 'utf8').includes('CHANNEL_PROBE_TOKEN') && !readFileSync(join(home, '.dsh', '.credentials.yaml'), 'utf8').includes('CHANNEL_PROBE_TOKEN'))
+    const channels = createCodexChannelsRuntime({ store: memoryCodexChannels(), tokens: store })
+    channels.capability.save({ id: 'probe', name: 'Probe', baseUrl: 'https://relay.invalid/v1', token: TOKEN_B })
+    channels.capability.setActive('probe')
+    check('store: the active channel token reaches the launch environment', Object.values(channels.launch().env).includes(TOKEN_B))
+    channels.capability.save({ id: 'probe', name: 'Probe', token: '' })
+    check('store: disconnect erases the active token without revealing the default token', store.read(ref) === undefined && !store.declared(ref))
+    const staleProfile = { id: 'probe', name: 'Probe', baseUrl: 'https://relay.invalid/v1', tokenRef: ref }
+    assert.throws(() => codexChannelLaunch(staleProfile, store))
+    check('store: stale channel refs cannot inject an erased token', detectCodexAuth({}, { channel: staleProfile, tokens: store }) === 'missing')
+    channels.capability.save({ id: 'probe', name: 'Probe', token: TOKEN_B })
+    channels.capability.remove('probe')
+    check('store: removing a channel cannot reactivate its default-home token', store.read(ref) === undefined && !store.declared(ref))
+    check('store: channel mutations preserve the default store and provider fallback', readFileSync(join(home, '.dsh', '.credentials.yaml'), 'utf8') === defaultStore && store.read('DEEPSEEK_API_KEY') === API_KEY)
+    const defaults = fileChannelTokens(join(home, '.dsh'))
+    check('store: the default home still owns its own channel tokens', defaults.read(ref) === TOKEN_A && defaults.declared(ref))
+    defaults.erase(ref)
+    check('store: erase also works when the active home is the default home', defaults.read(ref) === undefined && !defaults.declared(ref) && defaults.read('DEEPSEEK_API_KEY') === API_KEY)
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = previousUserProfile
     if (previousDshHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousDshHome
     rmSync(home, { recursive: true, force: true })

@@ -81,6 +81,10 @@ key 记入 `injectedEnvKeys` 参与指纹）。读取先看活动 home 的库，
 所以 `DSH_HOME` 覆盖不会让写在文档位置的 key 失联；写入只进活动 home。key 只走 spawn 管道，
 不进日志、提示或事件。
 
+渠道 ref（`CHANNEL_*`）的读写均限于当前 home，不回退默认库，因此断开或删除渠道
+不会重新读到另一个 home 的旧令牌。若渠道 key 只存在默认 home，需在当前 home 通过
+`/channel` 重新保存。
+
 两边都拿不到时不拦启动：Codex 自己会拒绝该 provider 的每个回合，运行时只在启动时报一次
 原因（点名 provider 与变量名，不含值）——导出该变量、写入凭据库，或把 provider 换成渠道。
 
