@@ -160,7 +160,7 @@ results back to the chat screen and add no new behavior.
 | `Ctrl+Left/Right` | Move by word |
 | `Home/End` | Move to the start/end of the current logical line |
 | `Ctrl+A` / `Ctrl+E` | `Ctrl+A` opens the subagent dashboard (`Mod+A` in the editor still moves to line start); `Ctrl+E` moves to line end and also expands or folds hidden older rows in long transcripts |
-| `Ctrl+U` | Delete before the caret |
+| `Ctrl+U` | Delete from the caret to the start of the current line, keeping text to the right; also supported in the launchpad input |
 | `Ctrl+K` | Delete after the caret |
 | `Ctrl+W` | Delete the preceding word |
 | `Backspace` / `Delete` | Delete the character before / after the caret; **with a selection, delete the whole selection** |

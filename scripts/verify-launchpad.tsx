@@ -818,6 +818,43 @@ for (const brand of ['claude', 'codex'] as const) {
   s.close()
 }
 
+// Ctrl+U uses the same edit as chat, through each supported terminal encoding.
+for (const fullscreen of [true, false]) {
+  for (const [encoding, key] of [
+    ['legacy', '\x15'], ['CSI-u', '\x1b[117;5u'], ['modifyOtherKeys', '\x1b[27;5;117~'],
+  ] as const) {
+    const ev: Ev[] = []
+    const s = await openLaunchpad(ev, { query: '前缀🙂 tail', fullscreen, columns: 48 })
+    const label = `Ctrl+U ${fullscreen ? 'fullscreen' : 'inline'} ${encoding}`
+    for (let i = 0; i < 4; i++) await s.send('\x1b[D')
+    await s.send(key)
+    check(`${label}: 删除光标前内容，保留右侧文字并回到行首`,
+      last(ev, 'query')?.value === 'tail' && last(ev, 'query')?.cursor === 0, JSON.stringify(last(ev, 'query')))
+    await s.send(key)
+    await s.send('X')
+    check(`${label}: 行首再次删除不影响文字，后续输入仍在行首`,
+      last(ev, 'query')?.value === 'Xtail' && last(ev, 'query')?.cursor === 1, JSON.stringify(last(ev, 'query')))
+    await s.send('\x1b[F')
+    await s.send(key)
+    check(`${label}: 行尾删除清空草稿但不提交或退出`,
+      last(ev, 'query')?.value === '' && last(ev, 'query')?.cursor === 0
+        && last(ev, 'submit') === undefined && last(ev, 'escape') === undefined, JSON.stringify(ev))
+    s.close()
+  }
+}
+for (const inputPaused of [false, true]) {
+  const ev: Ev[] = []
+  const s = await openLaunchpad(ev, { query: '保留草稿', inputPaused })
+  if (!inputPaused) await s.send('\t')
+  await settled(() => s.screen().includes('保留草稿'))
+  const before = ev.filter(event => event.type === 'query').length
+  s.input.write('\x15')
+  await sleep(100) // 固定窗:探针 焦点在入口或覆盖层时，编辑键不应改变草稿。
+  check(`Ctrl+U ${inputPaused ? '覆盖层接管' : '焦点在入口'} 时不删除草稿`,
+    ev.filter(event => event.type === 'query').length === before && s.screen().includes('保留草稿'))
+  s.close()
+}
+
 // ── C. 键位标签 ─────────────────────────────────────────────────────────────
 {
   const ev: Ev[] = []
