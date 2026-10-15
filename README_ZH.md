@@ -339,6 +339,12 @@ pnpm smoke
 
 `lib/types/` 是被忽略的生成物。`pnpm build` 从干净输出目录重编译，并跑构建门禁。**不支持 Git URL 安装**。源码 manifest 把 `@dsh-std/*` 保留为 workspace 依赖，`vendor/dsh-std` 是子模块，pnpm ≥11 还默认拒绝 git 托管的 `prepare` 脚本。请安装 registry 包：`dsh plugin --profile dsh-tui add @deepseek-harness-tui/dsh-tui`。渲染、问卷或工具卡改动还需对应的回归脚本。
 
+启动时默认使用 React 生产构建，即使工作区 `.env` 设置了
+`NODE_ENV=development`。需要调试 React 本身时，在启动 `dsh-tui` 或
+`dsh --profile dsh-tui` 前显式同时设置 `DSH_TUI_ALLOW_DEV=1` 和
+`NODE_ENV=development`。开发构建可能在长会话中持续增长内存，仅用于短时调试。
+`DSH_TUI_DEBUG` 只启用诊断，不改变 React 构建。
+
 ## 插件生态
 
 插件开发：[准入与开发指南](tui-profile/docs/plugin-admission-and-development.md) · [plugin-template](https://github.com/dsh-tui-ecosystem/plugin-template) · [dsh-tui-ecosystem](https://github.com/dsh-tui-ecosystem)。参考实现：`dsh-working-activity`。

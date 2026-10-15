@@ -530,8 +530,10 @@ const MSG = {
 const msg = key => MSG[key][lang]
 
 // React 开发构建会把每次渲染的 performance.measure() 堆进无界缓冲区导致
-// 长会话 OOM——与仓库根 dsh-tui.cmd 保持一致，强制 production。
-process.env.NODE_ENV ??= 'production'
+// 长会话 OOM。工作区 NODE_ENV 不作为调试授权；仅显式 opt-in 才保留它。
+// 保持内联：启动器更新必须能在没有新 lib/ 的旧全局安装中运行。
+if (process.env.DSH_TUI_ALLOW_DEV !== '1') process.env.NODE_ENV = 'production'
+else process.env.NODE_ENV ??= 'production'
 
 const sameDir = (a, b) => {
   try {
