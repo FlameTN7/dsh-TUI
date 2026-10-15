@@ -330,6 +330,7 @@ TUI 只负责交互与呈现：会话日志是唯一事实源，模型、工具�
 ## 开发
 
 CI 使用 Node 24 与 pnpm 11，本包支持 Node `^22.19 || >=24`。
+启动器会在安装或启动 profile 前拒绝不支持的 Node 版本，并提示当前版本与支持范围。
 
 ```sh
 pnpm install --frozen-lockfile

@@ -1472,6 +1472,19 @@ if (subcommand === 'migrate') {
   process.exit(await cliMigrate(process.argv.slice(3)))
 }
 
+// Ordinary launch must reject unsupported Node before bootstrap, delegation,
+// or any host probe. Keep recovery/diagnostic commands above reachable and
+// this check inline: migrated launchers cannot depend on lib/ or semver.
+// Mirrors package.json engines.node; verify-launcher-node covers its boundaries.
+const supportedNodeRange = '^22.19 || >=24'
+const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number)
+if (!(nodeMajor >= 24 || (nodeMajor === 22 && nodeMinor >= 19))) {
+  console.error(lang === 'zh'
+    ? `[dsh-tui] 无法启动：当前 Node ${process.version} 不受支持；需要 ${supportedNodeRange}。请升级 Node 后重试。`
+    : `[dsh-tui] cannot start: unsupported Node ${process.version}; requires ${supportedNodeRange}. Upgrade Node and retry.`)
+  process.exit(1)
+}
+
 // ─── 全局副本：瘦壳角色 ───────────────────────────────────────────────────────
 // DSH_TUI_NO_DELEGATE=1 是测试/调试逃生口：强制走完整逻辑（verify-launcher
 // 的沙箱用它直接驱动全量路径；现场排查委托链时同样可用）。

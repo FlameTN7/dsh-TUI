@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { shellQuote } from '../lib/types/utils/shellQuote.js'
+import './verify-launcher-node.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const bin = join(root, 'bin', 'dsh-tui.js')
@@ -113,6 +114,7 @@ function runBin(args, extraEnv = {}, { delegating = false } = {}) {
     env: {
       PATH: stubPath,
       HOME: tmp,
+      USERPROFILE: tmp,
       DSH_HOME: home,
       DSH_STUB_LOG: stubLog,
       // stub 安装创建的判定文件版本默认与启动器对齐——否则自举后的版本
