@@ -126,6 +126,10 @@ with that source pre-checked; any other key dismisses it.
   `dsh-tui migrate` prints.
 - **`needs the profile's compiled copy`**: the profile's compiled output is
   missing or too old — run `dsh-tui update` first.
+- **`migrate` could not run**: the following detail is the actual loading or
+  runtime error. The child restores host dependency resolution from the `dsh`
+  installation on PATH; if it names a missing package or `host module resolution`,
+  check that installation. Preview does not rewrite the profile or start its plugins.
 - **Imports fewer than the scan count**: the scan count matches candidate
   files by name; import additionally filters unreadable and empty
   conversations, so landing slightly lower is expected.

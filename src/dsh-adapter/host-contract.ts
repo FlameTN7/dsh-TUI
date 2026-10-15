@@ -34,7 +34,7 @@ export const HOST_MODULES = [
     key: 'appBoot',
     specifier: '@deepseek-ai/dsh-app-boot',
     via: 'host',
-    exports: ['loadLayeredEnv', 'createRuntimeResolution', 'PluginPackages', 'installFailLoud', 'readProfilePatches', 'mountRootInclude', 'auditStartupEntries', 'StartupError', 'getDshRuntimeVersion'],
+    exports: ['loadLayeredEnv', 'loadProfileDirectory', 'createRuntimeResolution', 'PluginPackages', 'installFailLoud', 'readProfilePatches', 'mountRootInclude', 'auditStartupEntries', 'StartupError', 'getDshRuntimeVersion'],
   },
   // The Loader's builtins must be the instance app-boot mounts includes with.
   { key: 'loader', specifier: '@deepseek-ai/cordis-plugin-loader', via: 'app-boot', exports: ['default'] },

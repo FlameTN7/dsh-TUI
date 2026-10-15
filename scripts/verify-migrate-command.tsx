@@ -7,11 +7,13 @@
  *   3. `/migrate --dry-run` 明说要源，不再报「未知迁移源 --dry-run」；
  *   4. `/migrate a b` 报 usage，不静默只跑第一个（与 CLI 退出码 2 同语义）；
  *   5. 重开裸 `/migrate` 清空上一轮的勾选（Esc 退出后不得残留 [x]）。
+ * verify-migrate-runtime.mjs 可额外传入隔离 HOME，验证确认层启动真实 CLI 子进程。
  * 运行：node --import tsx/esm scripts/verify-migrate-command.tsx
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { settled, viewportLines, writeParsed } from './lib/term-test.mjs'
 
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'zh'
@@ -249,6 +251,35 @@ const UNKNOWN = '未知迁移源'
   check('6a. Esc 回 picker 后 Enter 导入的是刚确认的那个源', after.includes('Claude Code'),
     after.replace(/\s+/gu, ' ').slice(0, 160))
   check('6b. 早先勾的 Codex 不再残留', !after.includes('Codex'))
+  await chat.unmount()
+}
+
+// 只有真实宿主回归提供的合成数据才走本段；普通命令回归仍只用空 HOME。
+const runtimeHome = process.env.DSH_TUI_MIGRATE_TEST_HOME
+if (runtimeHome !== undefined) {
+  process.env.HOME = runtimeHome
+  process.env.USERPROFILE = runtimeHome
+  process.env.GROK_HOME = join(runtimeHome, '.grok')
+  const chat = await mountChat()
+  const confirmation = await chat.run('/migrate claude-code')
+  check('7a. 真实源打开确认层', confirmation.includes(CONFIRM_TITLE) && confirmation.includes('Claude Code'))
+  const { Terminal } = await import('@xterm/headless')
+  const terminal = new Terminal({ cols: chat.stdout.columns, rows: chat.stdout.rows, allowProposedApi: true })
+  await writeParsed(terminal, chat.stdout.frames.join(''))
+  const screen = viewportLines(terminal).join('\n')
+  terminal.dispose()
+  await chat.keys(['d'])
+  check('7b. 确认层 d 启动真实子进程并回传预览', await settled(
+    () => chat.channel.localRows.flat().some(line => /1 conversation\(s\).*dry run/.test(line)), { timeoutMs: 30_000 }),
+  chat.channel.localRows.flat().join('\n'))
+  await chat.run('/migrate claude-code')
+  await chat.keys(['\r'])
+  check('7c. 确认层 Enter 启动真实子进程并回传幂等结果', await settled(
+    () => chat.channel.localRows.flat().some(line => /imported 0.*already present 1/.test(line)), { timeoutMs: 30_000 }),
+  chat.channel.localRows.flat().join('\n'))
+  check('7d. TUI 无升级误报且没有提交模型请求', !chat.channel.localRows.flat().some(line => /compiled copy|too old/.test(line))
+    && chat.channel.submitCalls.length === 0)
+  console.log(`HEADLESS CONFIRMATION:\n${screen}\nTUI CHILD OUTPUT:\n${chat.channel.localRows.flat().join('\n')}`)
   await chat.unmount()
 }
 

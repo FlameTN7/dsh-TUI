@@ -120,6 +120,11 @@ manifest 一致,过期即红)。
   在 CI 上总跑;生产探测与复刻指纹只在有已装宿主(PATH 上的 `dsh` 或 `DSH_TUI_CONTRACT_DSH`)时跑。
   移动版本线时在装有该版本 `dsh` 的机器上复核、把变化搬进 `host-dsh.ts`,再用 `--snapshot` 重写快照。
 
+迁移子进程通过 `migrate/entry.ts` 在首次加载迁移模块前恢复宿主解析。
+`prepareHostModuleResolution` 只调用公开的 `loadProfileDirectory`（不读用户补丁）、
+`createRuntimeResolution` 和 `PluginPackages`，不重写 profile、不组合插件，结束时释放根。
+旧宿主不具备入口契约时仍可使用 Node 直接解析的 peer；失败保留具体原因。
+
 ## Patch Surface
 
 `cordis.patch.yml` 里对官方行的干预已快照到 `patch-surface.snapshot.json`:

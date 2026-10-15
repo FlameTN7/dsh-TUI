@@ -246,6 +246,25 @@ export async function loadHostDsh(packageDir: string | undefined = undefined): P
   }
 }
 
+/**
+ * Install only the host's package resolution for a one-shot profile command.
+ * Unlike prepareProfile/prepareHostRoot, this reads the existing profile
+ * without rewriting its root or mounting its plugins. The caller owns and
+ * disposes the returned root after its lazy imports and work have finished.
+ */
+export async function prepareHostModuleResolution(host: HostDsh, profileDir: string): Promise<Context> {
+  const profile = host.appBoot.loadProfileDirectory(BIN_NAME, profileDir, host.profileBoot.INSTALL_ANCHOR, { userLayer: false })
+  const resolution = await host.appBoot.createRuntimeResolution({ installAnchor: host.profileBoot.INSTALL_ANCHOR, profile })
+  const ctx = new host.Context()
+  try {
+    await ctx.plugin(host.appBoot.PluginPackages as never, { resolution } as never)
+    return ctx
+  } catch (error) {
+    await ctx.fiber.dispose().catch(() => undefined)
+    throw error
+  }
+}
+
 export interface HostRoot {
   readonly ctx: Context
   /**

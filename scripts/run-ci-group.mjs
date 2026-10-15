@@ -531,6 +531,8 @@ const GROUPS = {
 // uuid v5 幂等、五 adapter fixture 解析（含 sourceId 只取裸文件名）、
 // /migrate 命令分类矩阵。
     ["verify-migrate", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate.mjs']],
+// 子进程在首次 import 前恢复宿主解析；缺依赖不能误报产物过旧。
+    ["verify-migrate-runtime", ['node', 'scripts/verify-migrate-runtime.mjs']],
 // 迁移源解析层回归（纯函数、合成 fixture）：jsonl 坏行计数、注入识别与
 // 包装剥离、标题归一、工具调用配对，以及各源逐条解析规则。
     ["verify-migrate-parse", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate-parse.mjs']],
