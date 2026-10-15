@@ -96,10 +96,8 @@ export function BtwComposer({
         flexShrink={0}
         borderStyle="round"
         borderColor={focused ? 'accent' : undefined}
-        onClick={onActivate === undefined ? undefined : event => {
-          event.stopImmediatePropagation()
-          onActivate()
-        }}
+        // Bubble to SidePanelLayout so a click from chat also focuses the panel.
+        onClick={onActivate}
       >
         <Box flexDirection="row" flexShrink={0} paddingLeft={1} paddingRight={1}>
           <Text color={focused ? 'accent' : undefined} bold>{'›'}</Text>
