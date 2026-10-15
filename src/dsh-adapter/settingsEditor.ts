@@ -136,8 +136,13 @@ export class SettingsForm {
   constructor(
     private readonly host: SettingsHost,
     private readonly view: SettingsNamespaceView | undefined,
-    private readonly fields: readonly TuiSettingsField[],
+    private fields: readonly TuiSettingsField[],
   ) {}
+
+  /** Refresh capability-dependent metadata without discarding staged edits. */
+  updateFields(fields: readonly TuiSettingsField[]): void {
+    this.fields = fields
+  }
 
   get available(): boolean {
     return this.view !== undefined

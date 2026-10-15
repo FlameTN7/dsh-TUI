@@ -1182,7 +1182,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         latexMath: Schema.boolean(),
         // No default on purpose: unset keeps the boot chain decisive
         // (applyEffortDefault hands `undefined` to channel.setDefaultEffort,
-        // which resolves cordis.yml `effort` → effort.json → adapter default).
+        // which resolves effort.json → cordis.yml `effort` → adapter default).
         effortDefault: Schema.string(),
         statusBar: Schema.object({
           compact: Schema.boolean().default(DEFAULT_STATUS_BAR.compact),
@@ -1709,11 +1709,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         {
           ...settingField('effortDefault'),
           format(value: unknown): string {
-            // Unset in settings.yaml: show what a boot would actually start
-            // on (the persisted /effort choice → the cordis effort default)
-            // instead of a misleading blank.
+            // Auto is a policy, not a pin to whichever inherited tier happens
+            // to win today. Keep it selectable when that tier is unavailable.
             if (value === undefined || value === null || value === 'auto') {
-              return readEffortPref() ?? config.effort ?? 'auto'
+              return 'auto'
             }
             return String(value)
           },

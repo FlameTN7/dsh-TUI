@@ -30,6 +30,11 @@
  *
  * Run with: node --import tsx/esm scripts/repro-effort.tsx
  */
+import './lib/fake-home.mjs'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import Schema from '@deepseek-ai/schemastery'
 import { Context } from '@deepseek-ai/cordis'
 import { LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { createChannel } from '../src/dsh-adapter/channel.js'
@@ -40,6 +45,8 @@ import { createBindingEvents } from '../src/dsh-adapter/channel/binding-events.j
 import { createModelActions } from '../src/dsh-adapter/channel/model-actions.js'
 import { createChannelOwner } from '../src/dsh-adapter/channel/owner.js'
 import { settle, sleep } from './lib/term-test.mjs'
+import { createTuiSettingsService } from '../src/dsh-adapter/tui-settings.js'
+import { readTuiSettings, writeTuiSettings } from '../src/tuiSettingsFile.js'
 
 let failed = 0
 function check(name: string, ok: boolean, extra = '') {
@@ -188,7 +195,12 @@ check(
  * `initialEffort` is passed explicitly, which also keeps the run hermetic
  * (no read of the operator's real effort.json).
  */
-function createRebindRig(options: { preferred: string; efforts: { id: string; name: string }[]; defaultEffort: string }) {
+function createRebindRig(options: {
+  preferred: string
+  efforts: { id: string; name: string }[]
+  defaultEffort: string
+  models?: Record<string, { efforts: { id: string; name: string }[]; defaultEffort: string }>
+}) {
   const rigRoot = new Context()
   const rigLlm = new LlmRuntime(rigRoot)
   rigLlm.registerAdapter(['narrow-route'], {
@@ -199,13 +211,15 @@ function createRebindRig(options: { preferred: string; efforts: { id: string; na
       return undefined
     },
     async resolveModel(provider: string, model: string) {
-      return { provider, id: model, name: model, reasoning: { efforts: options.efforts, defaultEffort: options.defaultEffort } }
+      return { provider, id: model, name: model, reasoning: options.models?.[model] ?? { efforts: options.efforts, defaultEffort: options.defaultEffort } }
     },
     async *stream(): AsyncGenerator<never> {
       throw new Error('not exercised')
     },
   } as never)
-  const agentCtx = rigRoot.extend()
+  // Each live Agent has its own event scope. Plain extend() shares Cordis
+  // listeners and would let parked Agents override this request waterfall.
+  const agentCtx = new Context()
   const agent = {
     id: 'rebind-agent',
     status: 'idle',
@@ -275,7 +289,7 @@ function createRebindRig(options: { preferred: string; efforts: { id: string; na
     const before = applies
     if (first) events.bind()
     else {
-      const next = { ...agent, id: `rebind-${before}`, ctx: rigRoot.extend(), session: { id: `rebind-session-${before}`, events: [] } }
+      const next = { ...agent, id: `rebind-${before}`, ctx: new Context(), session: { id: `rebind-session-${before}`, events: [] } }
       binding.switchTo(createDshSession(rigRoot as never, { agent: next as never, handle: undefined }), () => events.bind())
     }
     // The apply chain is promise-only (no timer anywhere in it), so a bounded
@@ -286,9 +300,9 @@ function createRebindRig(options: { preferred: string; efforts: { id: string; na
 
   /** Exactly the two waterfalls dsh-agent-loop's buildRequest dispatches. */
   const requestTier = async (): Promise<string | undefined> => {
-    const assembly = { variables: { provider: 'narrow-route', model: 'narrow-model' } }
+    const assembly = { variables: { provider: state.provider, model: state.model } }
     await binding.agent!.ctx.waterfall('system-prompt/assemble' as never, assembly, {}, () => Promise.resolve(assembly))
-    const seed = { provider: 'narrow-route', model: 'narrow-model' }
+    const seed = { provider: state.provider, model: state.model }
     const proposed = (await binding.agent!.ctx.waterfall(
       'agent/request' as never,
       { turn: 1, step: 1, signal: new AbortController().signal },
@@ -316,6 +330,12 @@ function createRebindRig(options: { preferred: string; efforts: { id: string; na
     bindOnce,
     drainUntil,
     requestTier,
+    async switchModel(model: string): Promise<void> {
+      state.model = model
+      selection.current = undefined
+      state.reasoningEffort = undefined
+      await modelActions.applyPreferredEffort()
+    },
   }
 }
 
@@ -454,6 +474,50 @@ function createRebindRig(options: { preferred: string; efforts: { id: string; na
     rig.state.reasoningEffort === rig.defaultEffort,
     `readout=${String(rig.state.reasoningEffort)} default=${rig.defaultEffort}`,
   )
+}
+
+// E — newly selectable /settings IDs are durable global preferences, and
+// reach the real DSH request waterfalls verbatim across binds/model changes.
+{
+  const directory = mkdtempSync(join(tmpdir(), 'effort-settings-request-'))
+  const file = join(directory, 'settings.json')
+  const ids = ['off', 'none', 'minimal', 'medium', 'xhigh', 'ultra', 'custom-budget']
+  const rig = createRebindRig({
+    preferred: 'high',
+    efforts: [...ids, 'high'].map(id => ({ id, name: id })),
+    defaultEffort: 'high',
+    models: { limited: { efforts: [{ id: 'high', name: 'High' }], defaultEffort: 'high' } },
+  })
+  let unwatch = () => {}
+  try {
+    writeTuiSettings({ version: 1, values: {} }, file)
+    const input = { ns: 'dsh-tui', file, profile: 'effort-fixture', keys: ['effortDefault'] }
+    const settings = createTuiSettingsService(input)
+    const scope = settings.register('dsh-tui', Schema.object({ effortDefault: Schema.string() }))
+    unwatch = scope.watch(value => rig.setDefaultEffort(value.effortDefault === 'auto' ? undefined : value.effortDefault))
+    await rig.bindOnce(true)
+    for (const id of ids) {
+      await settings.mutate('dsh-tui', [{ op: 'set', path: ['effortDefault'], value: id }])
+      await rig.drainUntil(() => rig.state.reasoningEffort === id)
+      check(`settings: ${id} 保存原始 ID`, readTuiSettings(file)?.values.effortDefault === id)
+      check(`settings: ${id} 到达真实请求`, await rig.requestTier() === id)
+      await rig.bindOnce()
+      check(`settings: ${id} 在新会话保持`, await rig.requestTier() === id)
+      await rig.switchModel('limited')
+      check(`settings: ${id} 不支持时请求使用明确回退`, await rig.requestTier() === (id === 'xhigh' ? 'high' : undefined))
+      check(`settings: ${id} 切模型不重写全局偏好`, readTuiSettings(file)?.values.effortDefault === id)
+      await rig.switchModel('narrow-model')
+      check(`settings: ${id} 返回支持模型后恢复偏好`, await rig.requestTier() === id)
+      check(`settings: ${id} 下一启动可回读`, (createTuiSettingsService(input).get('dsh-tui') as { effortDefault: string }).effortDefault === id)
+    }
+    check('settings: 不支持全局档位产生提示', rig.notices.length >= ids.length)
+    await settings.mutate('dsh-tui', [{ op: 'set', path: ['effortDefault'], value: 'auto' }])
+    await rig.drainUntil(() => rig.state.reasoningEffort === 'high')
+    check('settings: Auto 回到既有优先级链', await rig.requestTier() === 'high')
+  } finally {
+    unwatch()
+    rmSync(directory, { recursive: true, force: true })
+  }
 }
 
 process.exit(failed === 0 ? 0 : 1)

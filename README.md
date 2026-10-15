@@ -330,6 +330,8 @@ Full reference: [Interaction and commands](docs/interaction.en.md).
 
 `/model` shows models and reasoning effort on one page. DSH has provider tabs with **Recently used** first, moving the current model to the top; `Tab` / `Shift+Tab` select the next / previous provider. Codex and Claude open their model catalogs directly, without provider or recents tabs. `↑/↓` select a model, `←/→` adjust its effort, `Enter` applies the model and any explicit effort draft, and `Esc` cancels. Changing only the model preserves the backend's preference handling. Mouse users can click the available tabs, models, effort levels, and select/cancel hints; clicking an effort level immediately applies the focused model and that effort and closes the picker. The wheel moves through models.
 
+In `/settings`, **Default reasoning effort** offers Auto and the current model's full effort list, including custom IDs. A saved preference remains visible when another model cannot support it; changing models preserves the preference. Auto follows the last `/effort` choice, then the configured `effort`, then the model default.
+
 Short terminals keep the focused model and select/cancel actions visible, hiding descriptions and neighboring models first, then the effort row when only two rows remain.
 Shortcuts sit below the title and effort levels have their own section; DSH, Claude, and Codex use the terminal background while covering the text underneath.
 

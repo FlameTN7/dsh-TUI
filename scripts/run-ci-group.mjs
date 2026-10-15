@@ -148,6 +148,8 @@ const GROUPS = {
 // /settings 设置屏回归（issue #165）：开屏、staged 编辑、revision 栅栏
 // 保存、密钥走 credentials、Esc 返回会话。
     ["repro-settings", ['node', '--import', 'tsx/esm', 'scripts/repro-settings.tsx']],
+// 模型能力档位的 /settings 原始 ID、持久化、切模型与旧异步结果保护（#1317）。
+    ["verify-settings-effort", ['node', '--import', 'tsx/esm', 'scripts/verify-settings-effort.tsx']],
 // /settings 长页滚动回归：focus-follow 窗口只钉焦点行会裁掉不可聚焦的
 // 卡片边框行——下滚到底丢 ╰──╯、上滚到顶丢 ╭─ 标题；窗口必须贴住列表
 // 物理边界（根页/group 子页/极小视口下焦点永不被钉边挤出）。
