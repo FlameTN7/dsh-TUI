@@ -22,6 +22,8 @@
  *      verify-launchpad 的 S 组是孤立夹具自挂层，删 Chat 那一行那边照绿）。
  *   S. 启动自动展开侧栏：启动页 /resume、/home、/jobs 打开整屏，Esc 返回
  *      时输入框为空；选中会话后恢复侧栏路由与输入（fullscreen / inline / 窄屏）。
+ *   RS. 聊天页 /resume 始终读取历史会话，与侧栏、工作区登记和后端无关；
+ *      Esc 恢复输入、选择会话可继续发送，/home 保留工作区侧栏路由。
  *
  *
  * Run: node --import tsx/esm scripts/verify-launchpad-onboarding-chat.tsx
@@ -33,6 +35,7 @@ process.env.DSH_TUI_LANG = 'zh'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import type { ComposerImageRef, StagedImageInput } from '../adapter/ports/channel-view.js'
+import type { PromptController } from '../src/components/PromptInput.js'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
 import React from 'react'
@@ -1516,6 +1519,7 @@ const AC4_CUT_PRESET = 'Standard (Git Bash'
         check('S5 聊天页 /jobs 恢复侧栏路由',
           await settled(() => (findCell(chat.term, job.label)?.col ?? 0) > 64), chat.screen())
         await chat.send('\x1b')
+        await settle(() => chat.screen().includes('Ctrl+B 聚焦侧栏'))
         await chat.type('after-resume')
         await chat.send('\r')
         check('S6 侧栏 Esc 交还输入焦点，恢复后的会话可以继续发送',
@@ -1530,6 +1534,105 @@ const AC4_CUT_PRESET = 'Standard (Git Bash'
   }
 }
 
+
+// ── RS. /resume 的历史列表不能被只读登记账本的 workspace 侧栏替代（#1453） ──
+{
+  const previousOpen = getSidePanelOpen()
+  const previousPanels = getSidePanelPanels()
+  const summary = {
+    id: 'sidebar-history', kind: { kind: 'root' },
+    title: { text: 'sidebar-history-session', source: 'renamed' },
+    cwd: 'C:/code/demo-project', createdAt: 1, updatedAt: 9, bytes: 10, hasPrompt: true,
+  }
+  const sessions = [summary]
+  const registered = [{ id: 'registered', path: summary.cwd, title: 'Registered project', present: true, sessionCount: 1 }]
+  // useSyncExternalStore 的 snapshot 必须稳定；列表异步读取，不能由这份快照偷渡历史。
+  const agentRows: never[] = []
+  try {
+    applySidePanelPanels('workspace')
+    for (const [mode, fullscreen, columns, sidebar, ledger, backend] of [
+      ['fullscreen-empty', true, 120, true, false, 'dsh'],
+      ['fullscreen-registered', true, 120, true, true, 'dsh'],
+      ['closed-empty', true, 120, false, false, 'dsh'],
+      ['closed-registered', true, 120, false, true, 'dsh'],
+      ['inline', false, 120, true, false, 'dsh'],
+      ['narrow', true, 80, true, false, 'dsh'],
+      ['without-workspace', true, 120, true, false, 'claude'],
+    ] as const) {
+      applySidePanelOpen(sidebar)
+      let listCalls = 0
+      const resumed: string[] = []
+      const draftRef = React.createRef<PromptController>()
+      const chat = await mountChat({ columns }, {
+        backendCapabilities: {
+          backendId: backend, backendLabel: backend === 'dsh' ? 'DeepSeek' : 'Claude',
+          commands: backend === 'dsh' ? ['resume', 'workspace'] : ['resume'],
+        },
+        agentViewRows: () => agentRows,
+        listSessions: async () => { listCalls += 1; return sessions },
+        listWorkspaceRegistry: async () => ledger ? registered : [],
+        resumeTo: async (id: string) => { resumed.push(id); return { ok: true } },
+      }, { fullscreen, promptControllerRef: draftRef })
+      try {
+        await settle(() => draftRef.current !== null)
+        await chat.type('/resume')
+        await chat.send('\r')
+        const opened = await settled(() => chat.screen().includes(summary.title.text) && draftRef.current === null)
+        check(`RS1[${mode}] /resume 读取并显示历史会话，无需登记工作区`,
+          opened && listCalls > 0 && !chat.calls.some(call => call.startsWith('submit:')),
+          `listSessions=${listCalls}\n${chat.screen()}`)
+        if (!opened) continue
+        await chat.send('\x1b')
+        check(`RS2[${mode}] Esc 返回聊天输入框，已执行命令不残留`,
+          await settled(() => draftRef.current?.text() === '' && !chat.screen().includes(summary.title.text))
+            && getSidePanelOpen() === sidebar, chat.screen())
+
+        // 全屏启用鼠标；通过真实行首入口打开，验证管理界面借屏后交还草稿。
+        if (fullscreen) {
+          await chat.type('resume-draft')
+          await settle(() => draftRef.current?.text() === 'resume-draft')
+          // Tip 文案也可能提到 ⌸，带输入提示符才能定位到真正的按钮。
+          await chat.click('⌸ ❯')
+          await settle(() => draftRef.current === null)
+          await chat.send('\x1b')
+          check(`RS3[${mode}] 会话管理 Esc 原样交还未发草稿`,
+            await settled(() => draftRef.current?.text() === 'resume-draft'), chat.screen())
+          await chat.send('\x15') // Ctrl+U 清草稿，重新从 /resume 的命令入口恢复。
+        }
+        await chat.type('/resume')
+        await chat.send('\r')
+        // 等名册完成首次选择，避免 registry 与 history 分别落地时点击旧坐标。
+        await settle(() => viewportLines(chat.term).some(line => line.includes('❯') && line.includes(summary.title.text)))
+        await chat.send('\r')
+        check(`RS4[${mode}] 选择历史会话走恢复入口并回到聊天`,
+          await settled(() => resumed.includes(summary.id) && draftRef.current !== null), chat.screen())
+        await chat.type('after-history')
+        await chat.send('\r')
+        check(`RS5[${mode}] 恢复后输入可继续发送`,
+          await settled(() => chat.calls.includes('submit:after-history')), JSON.stringify(chat.calls))
+
+        if (mode === 'fullscreen-empty' || mode === 'fullscreen-registered') {
+          const beforeHome = listCalls
+          await chat.type('/home')
+          await chat.send('\r')
+          check(`RS6[${mode}] /home 仍打开右侧工作区概览，不读取会话列表`,
+            await settled(() => (findCell(chat.term, '当前工作区')?.col ?? 0) > 64
+              && chat.screen().includes('Esc 聊天'))
+              && draftRef.current !== null && listCalls === beforeHome, chat.screen())
+          await chat.send('\x1b')
+          await settle(() => chat.screen().includes('Ctrl+B 聚焦侧栏'))
+          await chat.type('/workspace')
+          await chat.send('\r')
+          check(`RS7[${mode}] /workspace 仍打开原操作菜单`,
+            await settled(() => chat.screen().includes('Workspace 操作')), chat.screen())
+        }
+      } finally { await chat.unmount() }
+    }
+  } finally {
+    applySidePanelOpen(previousOpen)
+    applySidePanelPanels(previousPanels)
+  }
+}
 
 // ── Z. 启动页图片：真实粘贴输入、附件随首句提交与草稿生命周期 ──
 {

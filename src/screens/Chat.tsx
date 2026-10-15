@@ -3290,16 +3290,6 @@ export function Chat({
         channel.notify(lines.join('\n'))
         return true
       }
-      case 'resume':
-      /**
-       * `/resume`, `/home` and `/agentview` are one screen.
-       *
-       * They were three implementations of one domain and drifted apart: the
-       * same session could be listed by all three, each with its own selection
-       * model and its own idea of what opening one does. Keeping the three
-       * commands is about muscle memory, not about three surfaces — every one
-       * of them lands here, on the same runtime.
-       */
       case 'home': {
         setHelpOpen(false)
         // Split-aware, like /trace and /jobs: while the sidebar is rendering
@@ -3307,7 +3297,7 @@ export function Chat({
         // The panel's own ⤢ goes back to the full-screen home. The panel reads
         // the DSH workspace ledger, though: a backend without that capability
         // (capability snapshots absent on test stubs = DSH) would have its
-        // /resume swallowed by an unsupported panel and no history anywhere —
+        // /home swallowed by an unsupported panel and no history anywhere —
         // those keep the full-screen session supervisor.
         const capabilities = channel.backendCapabilities as Channel['backendCapabilities'] | undefined
         const controller = sidePanelRef.current
@@ -3322,8 +3312,12 @@ export function Chat({
         setSupervisorOpen(true)
         return true
       }
+      case 'resume':
       case 'agentview': {
         setHelpOpen(false)
+        // History comes from the session catalog, including directories absent
+        // from the workspace ledger. Keep /resume on the session supervisor
+        // even while /home can open the workspace sidebar.
         // The screen opens immediately and loads its own list. Waiting for the
         // listing here would make it feel slower the more history a project
         // has, which is exactly backwards.

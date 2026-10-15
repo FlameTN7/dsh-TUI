@@ -38,7 +38,7 @@
 - **Side panel** — `Ctrl+B` splits the chat with a panel column once the terminal is wide enough; drag the divider to resize it. All eight built-in panels are enabled by default. The header shows each inactive panel's symbol; hover to see its name. Narrow terminals and inline mode keep full-screen panels.
 - **Live state** — activity animation, context bar, TPS, cache hit rate, effort, tokens, session cost estimate (main + subagents), Git and session metadata.
   Context-bar fill follows backend occupancy; colors estimate content composition. Compaction clears obsolete estimates, and missing composition displays a single used block with a measured used count in both hover details.
-- **One session manager** — `/resume` `/home` `/agentview` `/bg` `⌸`.
+- **One session manager** — `/resume` `/agentview` `/bg` `⌸`; `/home` opens the workspace sidebar when available.
 - **Session workflow** — `/new` `/compact` `/export` `/btw`, model hot-switch, fork, rewind, vim, fullscreen draft editor.
 - **IDE selection channel** — a VS Code selection lands in the prompt.
 - **DSH integrations** — presets, skills, MCP, goals, todos, subagents, questionnaires.
@@ -324,7 +324,7 @@ Full reference: [Interaction and commands](docs/interaction.en.md).
 
 ## Built-in Commands
 
-`/resume` · `/home` · `/agentview` · `/bg` · `⌸` open the same session manager: workspace rail, live state, filter, ★ pins. Also `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/setup` `/status` `/cost` `/jobs` `/skills` `/mcp` `/provider` `/auth` `/login` `/update`.
+`/resume` · `/agentview` · `/bg` · `⌸` open the same session manager: workspace rail, live state, filter, ★ pins. `/resume` always shows session history, including directories without a workspace registration, whether the sidebar is open or closed. In chat, `/home` opens the workspace panel when the backend supports workspaces, the sidebar is visible, and the workspace panel is enabled; otherwise it opens the session manager. Also `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/setup` `/status` `/cost` `/jobs` `/skills` `/mcp` `/provider` `/auth` `/login` `/update`.
 
 `/dsh`, `/codex`, and `/claude` switch directly to the named kernel, just like choosing it in `/kernel`: the choice is remembered and the process restarts into a new session. A running turn blocks switching; choosing the current kernel keeps the session. Availability checks and the Claude install wizard follow the same picker flow.
 
