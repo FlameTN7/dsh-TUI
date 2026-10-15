@@ -35,7 +35,7 @@
 - **侧栏面板** — `Ctrl+B` 在聊天右侧展开面板列，拖拽分隔线即可调宽，默认启用全部 8 个内置面板；顶部以各面板符号显示未选中的页面，悬停显示名称。终端够宽才分栏，窄屏与 inline 模式保持整屏面板。
 - **实时状态** — 工作动画、上下文条、TPS、缓存命中率、推理强度、token、本会话费用估算（主会话 + 子代理）、Git 与会话信息。
   上下文条的填充长度跟随后端占用量，颜色按内容构成估算；压缩后清理过期估算，缺少分类时显示单块已用区域，条和 ctx 字段的悬停明细都报实测已用量。
-- **唯一的会话管理界面** — `/resume` `/home` `/agentview` `/bg` `⌸`。
+- **唯一的会话管理界面** — `/resume` `/agentview` `/bg` `⌸`；工作区侧栏可用时，`/home` 打开该面板。
 - **会话工作流** — `/new` `/compact` `/export` `/btw`、模型热切换、fork、回溯、vim、全屏草稿编辑器。
 - **IDE 选区通道** — VS Code 里选中的代码进 prompt。
 - **DSH 集成** — presets、技能、MCP、目标、待办、子代理、问卷。
@@ -273,7 +273,7 @@ OpenAI 条款约束。完整操作与当前边界：[Codex 后端](docs/codex-ba
 
 ## 内置命令
 
-`/resume` · `/home` · `/agentview` · `/bg` · `⌸` 打开同一个会话管理界面：工作区栏、实时状态、筛选、★ 固定。另有 `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/setup` `/status` `/cost` `/jobs` `/skills` `/mcp` `/provider` `/auth` `/login` `/update`。
+`/resume` · `/agentview` · `/bg` · `⌸` 打开同一个会话管理界面：工作区栏、实时状态、筛选、★ 固定。无论侧栏开关，`/resume` 始终显示历史会话，未登记为工作区的目录也可浏览。聊天页的 `/home` 在后端支持工作区、侧栏可见且工作区面板已启用时打开该面板，否则打开会话管理界面。另有 `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/setup` `/status` `/cost` `/jobs` `/skills` `/mcp` `/provider` `/auth` `/login` `/update`。
 
 `/dsh`、`/codex`、`/claude` 直接切换到对应内核，效果与在 `/kernel` 中选择它相同：记住选择并重启进入新会话。回合运行中不能切换；选择当前内核会保留本会话。可用性检查与 Claude 安装向导也沿用选择器的流程。
 

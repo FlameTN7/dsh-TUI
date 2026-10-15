@@ -237,8 +237,8 @@ export const TIPS: readonly Tip[] = [
   {
     id: 'cmd-session-manager',
     group: 'commands',
-    zh: '/resume、/home、/agentview、/bg 和输入框行首 ⌸，进的都是同一个会话管理界面',
-    en: '/resume, /home, /agentview, /bg and the ⌸ button all open one session manager',
+    zh: '/resume、/agentview、/bg 和输入框行首 ⌸，进的都是同一个会话管理界面',
+    en: '/resume, /agentview, /bg and the ⌸ button all open one session manager',
   },
   {
     id: 'cmd-rename',

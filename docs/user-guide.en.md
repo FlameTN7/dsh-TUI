@@ -189,7 +189,9 @@ Unrecognized keys are ignored, `Esc` does nothing, clear with `Ctrl+C`/`dd`.
 
 - `↑/↓` move, `1` allow (this time only), `2` deny, `Enter` submit; `Esc`/`Ctrl+C` deny.
 
-**Session manager** (`/resume`, `/home`, `/agentview`, `/bg`, `⌸` at the input line start — the same screen)
+**Session manager** (`/resume`, `/agentview`, `/bg`, `⌸` at the input line start — the same screen)
+
+`/resume` always opens the full-screen history list, whether the sidebar is open or closed and whether a workspace is registered. In chat, `/home` prefers the workspace sidebar when available; otherwise it opens this screen too.
 
 - Layout: left workspace column, right session column; ≥84 columns side-by-side, narrower hides the workspace column.
 - Switch column `←/→`; move `↑/↓`/`PgUp`/`PgDn`; **typing = live filter** (by title/dir/branch/model).
@@ -320,7 +322,7 @@ one-column seam between the two surfaces.
   matching panel enabled, `Ctrl+T` / `/trace` open the trajectory panel and `/home` opens the
   workspace panel; the `⤢` on the panel bar puts them back on the whole screen (`⤢` is the mouse
   path — the keyboard equivalents are each view's own full-screen shortcut: `Ctrl+T` trajectory,
-  `Ctrl+A` agents, `/jobs` jobs, `/home` the workspace home).
+  `Ctrl+A` agents, `/jobs` jobs, `/resume` the session manager).
 - Settings: the **Side panel** group in `/settings`, or
   `dsh-tui.sidePanel.{splitEnabled,open,ratio,panels}` (see the
   [configuration reference](configuration.en.md#tui-configuration)).
@@ -338,7 +340,7 @@ The command menu = built-in commands (aliases included) + DSH registry commands 
 |---|---|---|
 | `/new` | none | start a new session (no confirmation; the old session stays under `/resume`) |
 | `/resume` | none | open the **session manager** (workspace + session columns, live filter, pins, cross-workspace): switching just **parks** the outgoing session — it keeps running in the background and the active turn is not interrupted (like `/tree`: neither browsing nor switching cuts a running turn short; on the Claude backend a mid-turn switch is refused instead) |
-| `/home` / `/agentview` / `/bg` | none | the same session manager (`/home`=workspace view · `/agentview`=hosted session state · `/bg`=send to background and open, alias `/background`) |
+| `/home` / `/agentview` / `/bg` | none | the same session manager (`/home` prefers the workspace sidebar when available in chat · `/agentview`=hosted session state · `/bg`=send to background and open, alias `/background`) |
 | `/tree` | none | session fork tree: hover to preview, click to rewind / fork / switch branch |
 | `/fork` | none | copy the current session into a resumable clone (original unaffected) |
 | `/restart` | none | restart the process and resume this session (rejected mid-turn, `Ctrl+C` first) |
@@ -433,7 +435,7 @@ dsh-TUI ships no generic skills; `/skills` browses skills DSH discovers, and a d
 | Action | Command/Key | Notes |
 |---|---|---|
 | New | `/new` | no confirmation — the old session is persisted, always reachable via `/resume`; also clears the resume marker |
-| Resume | `/resume` (same as `/home` `/agentview` `/bg` and `⌸` at the input line start) | the three-in-one **session manager**: `←/→` switch column, type to filter, `Enter` enter, `Ctrl+N` new, `Ctrl+X` stop background session, `★`/`☆` pin. Switching just parks the session, the turn keeps running; a session taken by another terminal shows red and can't be entered (see §2.7) |
+| Resume | `/resume` (same as `/agentview` `/bg` and `⌸` at the input line start) | the three-in-one **session manager**: `←/→` switch column, type to filter, `Enter` enter, `Ctrl+N` new, `Ctrl+X` stop background session, `★`/`☆` pin. Switching just parks the session, the turn keeps running; a session taken by another terminal shows red and can't be entered (see §2.7) |
 | Rename | `/rename <标题>` | rename immediately and persist (writes a session/title event, readable back in the session manager) |
 | Compact | `/compact` | trigger DSH compaction manually; **rejected mid-turn**; unavailable under minimal preset; the compaction point renders as a Divider summary row |
 | Export | `/export` | export Markdown from the full session log (thinking and tool-call sections), file `dsh-tui-export-<时间戳>.md` in the current session cwd |
