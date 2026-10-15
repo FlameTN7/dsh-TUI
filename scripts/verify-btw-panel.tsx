@@ -10,13 +10,15 @@
  *  - 浮层回退（BtwPanelFallback）：粘贴的换行、带修饰的 Enter 不关浮层，
  *    只有无修饰的 Enter 才关（关闭即中止在途侧问）。
  *  - Chat 级（真 Chat + fake channel）：/btw 快路由——面板启用时路由进侧栏
- *    且浮层反针不出现（单一 surface）；未启用时浮层回退，Esc 关闭即 abort。
+ *    且浮层反针不出现（单一 surface）；未启用时浮层回退，Esc 关闭即 abort；
+ *    SGR 点击输入框从主聊天取回焦点、保留两边草稿，隐藏面板不收键。
  * 运行：node --import tsx/esm scripts/verify-btw-panel.tsx
  */
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
+import { settled, sleep } from './lib/term-test.mjs'
 
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'zh'
@@ -54,6 +56,22 @@ function check(name: string, ok: boolean, extra = ''): void {
 }
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const ESC = String.fromCharCode(27)
+
+/** Locate the rendered input glyph in terminal cells, including CJK widths. */
+function composerCell(term: import('@xterm/headless').Terminal): { x: number; y: number } {
+  for (let y = 0; y < term.rows; y += 1) {
+    const line = term.buffer.active.getLine(term.buffer.active.baseY + y)
+    for (let x = 0; x < term.cols; x += 1) {
+      if (line?.getCell(x)?.getChars() === '›') return { x, y }
+    }
+  }
+  throw new Error('btw composer is not visible')
+}
+
+function clickAt(stdin: FakeStdin, point: { x: number; y: number }): void {
+  stdin.write(`${ESC}[<0;${point.x + 1};${point.y + 1}M`)
+  stdin.write(`${ESC}[<0;${point.x + 1};${point.y + 1}m`)
+}
 
 function scriptedAsk() {
   const calls: { question: string }[] = []
@@ -379,10 +397,17 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   btwThreads.resetForTest()
   const ask = scriptedAsk()
   const channel = makePanelChannel(ask)
-  const frame = await mountTree(100, <BtwThreadScene channel={channel as never} onClose={() => {}} />)
+  let closes = 0
+  const frame = await mountTree(100, <BtwThreadScene channel={channel as never} onClose={() => { closes += 1 }} />)
   await keys(frame, ['a', 'b', ESC, '\t', 'c'])
   await delay(150)
   check('F1. Esc 后 Tab 回到 composer 继续编辑', btwThreads.get('probe-session')?.draft === 'abc', JSON.stringify(btwThreads.get('probe-session')?.draft))
+  frame.stdin.write(ESC)
+  check('F1b. Esc 收起全屏编辑层', await settled(() => !frame.lines().join('\n').includes(t('btw-input-hint-edit'))))
+  clickAt(frame.stdin, composerCell(frame.term))
+  check('F1c. 点击重新聚焦全屏输入框', await settled(() => frame.lines().join('\n').includes(t('btw-input-hint-edit'))))
+  frame.stdin.write('d')
+  check('F1d. 点击后续写草稿，不退出全屏', await settled(() => btwThreads.get('probe-session')?.draft === 'abcd' && closes === 0))
   await frame.app.unmount()
 }
 
@@ -458,20 +483,20 @@ const plainText = (frames: readonly string[]) => frames.join('')
   .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
   .replace(/\x1b\]9;[^\x07]*\x07/g, '')
 
-async function mountChat(ask: ReturnType<typeof scriptedAsk>) {
+async function mountChat(ask: ReturnType<typeof scriptedAsk>, columns = 100) {
   const channel = makeChatChannel(ask)
-  const term = new XTerm({ cols: 100, rows: ROWS, scrollback: 200, allowProposedApi: true })
-  const stdout = new FakeStdout(term, 100)
+  const term = new XTerm({ cols: columns, rows: ROWS, scrollback: 200, allowProposedApi: true })
+  const stdout = new FakeStdout(term, columns)
   const stdin = new FakeStdin()
   const instance = await render(
-    <Chat channel={channel as never} questionStore={new QuestionStore()} fullscreen />,
+    <AlternateScreen><Chat channel={channel as never} questionStore={new QuestionStore()} fullscreen /></AlternateScreen>,
     { stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream, stderr: new FakeStderr() as unknown as NodeJS.WriteStream, exitOnCtrlC: false, patchConsole: false },
   )
   await delay(500)
   const lines = () => {
     const buf = term.buffer.active
     const out: string[] = []
-    for (let y = 0; y < ROWS; y += 1) out.push((buf.getLine(y)?.translateToString(false) ?? '').padEnd(100, ' '))
+    for (let y = 0; y < ROWS; y += 1) out.push((buf.getLine(y)?.translateToString(false) ?? '').padEnd(columns, ' '))
     return out
   }
   // Negative checks read the rendered viewport after every write instead of
@@ -490,7 +515,7 @@ async function mountChat(ask: ReturnType<typeof scriptedAsk>) {
     for (const needle of watched.keys()) if (screen.includes(needle)) watched.set(needle, true)
   }
   return {
-    channel, stdout, stdin, lines,
+    channel, stdout, stdin, lines, term,
     /** Start recording whether `needle` is ever on screen. */
     viewport,
     watch: (needle: string) => { watched.set(needle, viewport().includes(needle)) },
@@ -573,6 +598,89 @@ async function mountChat(ask: ReturnType<typeof scriptedAsk>) {
     closed = chat.viewport()
   }
   check('C2d. 浮层关闭后回到普通聊天（视口里没有浮层）', !closed.includes(fallbackNote), closed.split('\n').filter(l => l.trim() !== '').slice(-4).join(' | '))
+  await chat.unmount()
+}
+
+// C3: real Chat owns focus; only SGR clicks and keys cross into the composer.
+// Repeat at the narrow split limit so coordinates cannot silently hit the body.
+for (const columns of [100, 93]) {
+  applySidePanelOpen(true)
+  applySidePanelRatio(0.62)
+  applySidePanelPanels('btw,todo')
+  btwThreads.resetForTest()
+  const ask = scriptedAsk()
+  const chat = await mountChat(ask, columns)
+  const name = `C3 (${columns} 列). `
+  const mainCaret = chat.cursor()
+  const sideInput = composerCell(chat.term)
+  const editing = () => chat.viewport().includes(t('btw-input-hint-edit'))
+  const draft = () => btwThreads.get('probe-session')?.draft ?? ''
+  check(name + '鼠标目标是可见侧问输入行，初始光标在主输入框',
+    sideInput.x > columns / 2 && mainCaret.x < columns / 2,
+    JSON.stringify({ mainCaret, sideInput }))
+
+  clickAt(chat.stdin, sideInput)
+  const focusedByClick = await settled(() => editing()
+    && chat.cursor().x > sideInput.x && chat.cursor().y === sideInput.y)
+  check(name + '直接点击取回宿主焦点与 IME 光标', focusedByClick, JSON.stringify(chat.cursor()))
+  if (!focusedByClick) {
+    if (process.env.BTW_SCREENSHOT) console.log(`SCREENSHOT-CLICK-${columns}\n` + chat.viewport())
+    await chat.unmount()
+    continue
+  }
+  chat.stdin.write('SIDE')
+  check(name + '直接点击后首段文本进入侧问草稿', await settled(() => draft() === 'SIDE'), draft())
+
+  clickAt(chat.stdin, mainCaret)
+  check(name + '点击主输入框归还焦点并保留侧问草稿', await settled(() =>
+    chat.cursor().x < columns / 2 && !editing() && draft() === 'SIDE'))
+  chat.stdin.write('MAIN')
+  check(name + '主输入框可独立编辑', await settled(() => chat.lines().some(line => line.includes('MAIN'))))
+  clickAt(chat.stdin, composerCell(chat.term))
+  check(name + '再次点击侧问取回焦点', await settled(editing))
+  chat.stdin.write('2')
+  check(name + '再次点击续写原草稿', await settled(() => draft() === 'SIDE2'), draft())
+
+  chat.stdin.write('\t')
+  check(name + 'Tab 退出编辑且保留草稿', await settled(() => !editing() && draft() === 'SIDE2'))
+  chat.stdin.write('\r')
+  check(name + '阅读态 Enter 只聚焦，不提交', await settled(() => editing() && ask.calls.length === 0))
+  chat.stdin.write('\r')
+  check(name + '编辑态 Enter 只提交一次并清空草稿', await settled(() =>
+    ask.calls.length === 1 && ask.calls[0]?.question === 'SIDE2' && draft() === ''))
+  chat.stdin.write('\r')
+  await sleep(150) // 固定窗:探针 空草稿再次 Enter 不得重复提交，也不得落进主聊天。
+  check(name + '重复 Enter 无重复侧问或主聊天提交', ask.calls.length === 1 && chat.channel.submitCalls.length === 0)
+  ask.finish('CLICK_ANSWER')
+  check(name + '侧问答案正常显示', await settled(() => chat.viewport().includes('CLICK_ANSWER')))
+
+  chat.stdin.write('KEEP')
+  check(name + '新草稿可编辑', await settled(() => draft() === 'KEEP'))
+  chat.stdin.write(ESC)
+  check(name + '第一次 Esc 退出编辑并保留草稿', await settled(() => !editing() && draft() === 'KEEP'))
+  chat.stdin.write(ESC)
+  check(name + '第二次 Esc 回主聊天', await settled(() =>
+    chat.viewport().includes(t('panel-hint-unfocused')) && chat.cursor().y === mainCaret.y && chat.cursor().x < columns / 2))
+  chat.stdin.write('\r')
+  check(name + '主草稿无侧问文本泄漏', await settled(() =>
+    chat.channel.submitCalls.length === 1 && chat.channel.submitCalls[0] === 'MAIN' && draft() === 'KEEP'),
+    JSON.stringify({ submitCalls: chat.channel.submitCalls, draft: draft() }))
+
+  chat.stdin.write(String.fromCharCode(2))
+  check(name + '快捷键可返回侧栏阅读层', await settled(() => !chat.viewport().includes(t('panel-hint-unfocused'))))
+  chat.stdin.write(']')
+  check(name + '切到其他面板后侧问输入框隐藏', await settled(() => !chat.viewport().includes('›')))
+  clickAt(chat.stdin, sideInput)
+  chat.stdin.write('x')
+  await sleep(150) // 固定窗:探针 隐藏的 enabled 面板不得响应原输入框坐标或键盘。
+  check(name + 'inactive 侧问不抢焦点、不修改或提交草稿', !chat.viewport().includes('›') && draft() === 'KEEP' && ask.calls.length === 1)
+  chat.stdin.write('[')
+  check(name + '切回侧问保留草稿', await settled(() => chat.viewport().includes('›') && draft() === 'KEEP'))
+  clickAt(chat.stdin, composerCell(chat.term))
+  check(name + '重新显示后点击仍可编辑', await settled(editing))
+  chat.stdin.write('Y')
+  check(name + '重新显示后续写到原草稿', await settled(() => draft() === 'KEEPY'), draft())
+  if (process.env.BTW_SCREENSHOT) console.log(`SCREENSHOT-CLICK-${columns}\n` + chat.viewport())
   await chat.unmount()
 }
 
