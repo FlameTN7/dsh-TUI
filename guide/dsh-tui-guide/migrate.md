@@ -101,6 +101,9 @@ TUI 启动约 12 秒后做一次后台检测：任一源在最近 20 分钟内�
 - **`unknown agent`**：源名以 `dsh-tui migrate` 无参输出的名单为准。
 - **`needs the profile's compiled copy`**：profile 内编译产物缺失或过旧，
   先运行 `dsh-tui update`。
+- **`migrate` 无法运行 / `could not run`**：后面的原因是实际加载或运行错误。
+  子进程会从 PATH 上的 `dsh` 安装恢复宿主依赖解析；若提到缺失包或
+  `host module resolution`，检查该 `dsh` 安装是否完整。预览不会重写 profile 或启动其插件。
 - **导入数低于扫描计数**：扫描计数是候选文件数（按文件名匹配），
   导入会过滤解析失败与空对话，略低属正常。
 - **全新 `DSH_HOME` 首跑报 installation rejected**：profile 自举撞上
