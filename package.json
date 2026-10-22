@@ -268,6 +268,7 @@
     "verify:selection-stale-guard": "node --import tsx/esm scripts/verify-selection-stale-guard.tsx",
     "verify:inject-channel": "node --import tsx/esm scripts/verify-inject-channel.mjs",
     "verify:session-mounts": "node --import tsx/esm scripts/verify-session-mounts.mjs",
+    "verify:session-mounts-linux-pty": "node scripts/verify-session-mounts-linux-pty.mjs",
     "verify:handoff-stdin": "node --import tsx/esm scripts/verify-handoff-stdin.ts",
     "verify:session-supervisor": "node --import tsx/esm scripts/verify-session-supervisor.tsx",
     "verify:composer-draft-handoff": "node --import tsx/esm scripts/verify-composer-draft-handoff.tsx",
@@ -497,6 +498,7 @@
     "@dsh-std/storage"
   ],
   "devDependencies": {
+    "@microsoft/tui-test": "0.1.0",
     "@anthropic-ai/claude-agent-sdk": "0.3.287",
     "@deepseek-ai/cordis": "^4.0.1 || 4.0.5-alpha.2",
     "@deepseek-ai/cordis-plugin-group": "^1.0.4 || 1.0.5-alpha.2",
