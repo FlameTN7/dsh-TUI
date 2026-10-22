@@ -1075,6 +1075,12 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
       emitTurnSummary()
       return
     }
+    if (reason.kind === 'aborted' && reason.cause === 'disposed') {
+      appendRow({ id: deps.rowIds.value, kind: 'notice', text: t('session-stopped') })
+      deps.rowIds.value += 1
+      emitTurnSummary()
+      return
+    }
     if (reason.kind === 'aborted' || reason.kind === 'interrupted') {
       // A user cancel closes the turn as `aborted`; `interrupted` only
       // appears for crash-orphaned turns. Both user-interruption paths
