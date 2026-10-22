@@ -87,6 +87,7 @@ export const UPSTREAM_BLESSED_PACKAGES = [
   '@deepseek-ai/dsh-persona',
   '@deepseek-ai/dsh-scope',
   '@deepseek-ai/dsh-session',
+  '@deepseek-ai/dsh-session-persistence-jsonl',
   '@deepseek-ai/dsh-settings',
   '@deepseek-ai/dsh-skill',
   '@deepseek-ai/dsh-storage',
