@@ -31,7 +31,12 @@ function makeAgent(session: Session) {
   }
   const finish = (reason: TurnEndReason, text?: string) => {
     if (text) emit('assistant/message', {
-      turn, step: 1, stream: [], message: createAssistantMessage({
+      turn, step: 1, stream: [],
+      // Real settlements carry request usage; without it the turn-summary row
+      // (and its outcome marker) never renders, so the disposal case would not
+      // exercise the path this regression exists to protect.
+      usage: { inputTokens: 10, outputTokens: 5 },
+      message: createAssistantMessage({
         source: { provider: 'fake', model: 'probe-model' }, content: [{ type: 'text', text }],
       }),
     } as never)

@@ -40,6 +40,10 @@ for (const lang of ['en', 'zh']) {
       }
       const stopped = lang === 'zh' ? '会话已停止' : 'Session stopped'
       const interrupted = lang === 'zh' ? '已打断' : 'Interrupted'
+      // The turn-summary row's own marker. A disposed turn carries usage in
+      // this fixture on purpose: without covering it, "interrupted" could come
+      // back through the ledger while the notice still read "Session stopped".
+      const usageInterrupted = lang === 'zh' ? '已中断' : 'interrupted'
       const invitation = lang === 'zh' ? '接下来想让' : 'What should'
       let inspectState
       try {
@@ -62,6 +66,7 @@ for (const lang of ['en', 'zh']) {
         await term.getByText(stopped).expect()
         await term.getByText(invitation).expect({ not: true })
         await term.getByText(interrupted).expect({ not: true })
+        await term.getByText(usageInterrupted).expect({ not: true })
         await term.type('editable-after-stop')
         await waitFor(async () => (await term.text()).split('\n').filter(line => /❯/.test(line)).at(-1)?.includes('editable-after-stop'), 'composer remains editable')
         await term.screenshot(join(dir, 'editable.svg'))
