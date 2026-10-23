@@ -113,9 +113,7 @@ TUI 启动约 12 秒后做一次后台检测：任一源在最近 20 分钟内�
 ## 设计取舍（维护者与贡献者参考）
 
 - CLI 与 TUI 子进程在首次导入迁移模块前安装宿主解析，结束时释放；
-  已初始化 profile 的扫描与 dry-run 不写配置、不组合用户插件。真实 PTY 回归
-  `scripts/verify-migrate-pty.mjs` 使用 Microsoft tui-test、隔离会话及已安装宿主；
-  设置 `DSH_TUI_CONTRACT_DSH` 为宿主包目录后运行 `pnpm verify:migrate-pty`。
+  已初始化 profile 的扫描与 dry-run 不写配置、不组合用户插件。
 - 解析与 IO 分离：`adapters/<源>.parse.ts` 是纯函数（原始文本 → 轮模型），
   共享规则在 `parse/`（jsonl 坏行计数、注入识别与包装剥离、标题归一、
   工具调用配对）；adapter 只做文件发现。OMP 仍产出角色列表，经
