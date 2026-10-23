@@ -142,10 +142,7 @@ with that source pre-checked; any other key dismisses it.
 
 - CLI and TUI children install host resolution before importing migration,
   then dispose it. Scanning and dry-run in an initialized profile neither
-  rewrite its configuration nor compose its plugins. The real PTY regression
-  `scripts/verify-migrate-pty.mjs` uses Microsoft tui-test, isolated sessions
-  and an installed host: set `DSH_TUI_CONTRACT_DSH` to the host package directory
-  and run `pnpm verify:migrate-pty` after compiling.
+  rewrite its configuration nor compose its plugins.
 - Parsing is separate from IO: `adapters/<source>.parse.ts` are pure
   functions (raw text → turn model) over shared rules in `parse/` (jsonl
   bad-line counting, injection recognition and unwrapping, title
