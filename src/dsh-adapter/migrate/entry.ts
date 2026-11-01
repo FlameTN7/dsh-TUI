@@ -37,7 +37,7 @@ export async function cliMigrate(argv: readonly string[], profileDir: string): P
       // The migration already ran: a cleanup failure must not turn a finished
       // run into "could not run". Keep the original error on the failure path.
       if (!failed) {
-        process.stderr.write(`dsh-tui: migrate completed; host module resolution cleanup failed: ${flat(error)}\n`)
+        process.stderr.write(`dsh-tui: migrate finished; host module resolution cleanup failed: ${flat(error)}\n`)
       }
     }
   }

@@ -1522,13 +1522,19 @@ if (subcommand === 'update') {
 // profile 未初始化时先自举；产物缺失或旧版无 cliMigrate 导出给升级指引。
 if (subcommand === 'migrate') {
   if (!profileReady()) bootstrapProfile()
-  const entry = join(profilePkgDir, 'lib', 'types', 'dsh-adapter', 'migrate', 'entry.js')
-  if (!existsSync(entry) || !existsSync(join(profilePkgDir, 'lib', 'types', 'dsh-adapter', 'migrate', 'cli.js'))) {
+  const migrateDir = join(profilePkgDir, 'lib', 'types', 'dsh-adapter', 'migrate')
+  const cli = join(migrateDir, 'cli.js')
+  if (!existsSync(cli)) {
     console.error(msg('migrateUnavailable'))
     process.exit(1)
   }
+  // entry.js installs the host resolver for cold profiles; profiles built before
+  // it existed only have cli.js and always ran it directly. Upgrading the
+  // launcher must not make those profiles demand an update first.
+  const entry = join(migrateDir, 'entry.js')
+  const target = existsSync(entry) ? entry : cli
   try {
-    const { cliMigrate } = await import(pathToFileURL(entry).href)
+    const { cliMigrate } = await import(pathToFileURL(target).href)
     if (typeof cliMigrate !== 'function') {
       console.error(msg('migrateUnavailable'))
       process.exit(1)
